@@ -1,0 +1,2042 @@
+"use client";
+
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  AlertCircle,
+  ArrowDownToLine,
+  ArrowRight,
+  ArrowRightLeft,
+  Banknote,
+  BarChart3,
+  Bell,
+  Building2,
+  CalendarDays,
+  Check,
+  CheckCircle2,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  CircleDollarSign,
+  ClipboardCheck,
+  Clock3,
+  Download,
+  FileCheck2,
+  FileSpreadsheet,
+  FileText,
+  FolderOpen,
+  Gauge,
+  HandCoins,
+  IdCard,
+  Landmark,
+  LayoutDashboard,
+  Link2,
+  Mail,
+  MapPin,
+  Menu,
+  MoreHorizontal,
+  Paperclip,
+  Pencil,
+  Phone,
+  Plus,
+  ReceiptText,
+  RefreshCw,
+  Rocket,
+  Search,
+  Settings,
+  ShieldCheck,
+  Trash2,
+  ExternalLink,
+  UploadCloud,
+  Users,
+  WalletCards,
+  X,
+} from "lucide-react";
+
+import { api, ApiError } from "./api-client";
+import { csvRecords } from "../lib/csv.mjs";
+import { Login, AccountPanel, type AppUser } from "./account-panel";
+
+type View =
+  | "overview"
+  | "companies"
+  | "team"
+  | "schedule"
+  | "entries"
+  | "resources"
+  | "reconciliation"
+  | "remaps"
+  | "documents"
+  | "links"
+  | "reports";
+
+type Project = {
+  version: number;
+  id: string;
+  companyId: string;
+  name: string;
+  code: string;
+  agency: string;
+  period: string;
+  startDate?: string;
+  endDate?: string;
+  approved: number;
+  counterpart: number;
+  counterpartRealized: number;
+  released: number;
+  executed: number;
+  income: number;
+  status?: "Em execução" | "A iniciar" | "Concluído";
+  installments?: number;
+  receivedInstallments?: number[];
+};
+
+type Company = {
+  version: number;
+  id: string;
+  name: string;
+  short: string;
+  cnpj: string;
+  city: string;
+  state: string;
+  responsible: string;
+  email: string;
+  phone: string;
+};
+
+type ProjectDraft = {
+  companyId: string;
+  name: string;
+  code: string;
+  agency: string;
+  startDate: string;
+  endDate: string;
+  approved: number;
+  counterpart: number;
+  installments: number;
+};
+
+type ResourceEntryKind = "Parcela da subvenção" | "Contrapartida financeira" | "Rendimento de aplicação";
+
+type ResourceEntryDraft = {
+  kind: ResourceEntryKind;
+  value: number;
+  date: string;
+  installment?: number;
+  reference: string;
+  proof?: File;
+  notes: string;
+};
+
+type DocumentFile = { id: string; kind: string; name: string; mime: string; size: number };
+type Expense = {
+  version: number;
+  id: string;
+  projectId: string;
+  date: string;
+  supplier: string;
+  description: string;
+  rubric: string;
+  value: number;
+  docs: number;
+  requiredDocs: number;
+  draft?: boolean;
+  taxId?: string;
+  notes?: string;
+  documents?: DocumentFile[];
+  status: "Conciliado" | "Pendente" | "Em análise";
+};
+
+type ProjectLink = {
+  version: number;
+  id: string;
+  projectId: string;
+  name: string;
+  url: string;
+  addedAt: string;
+};
+
+type TeamMember = {
+  version: number;
+  id: string;
+  projectId: string;
+  name: string;
+  role: string;
+  activity: string;
+};
+
+type ScheduleStatus = "Não iniciada" | "Em andamento" | "Concluída" | "Atrasada";
+
+type ScheduleItem = {
+  version: number;
+  id: string;
+  projectId: string;
+  item: string;
+  activity: string;
+  value: number;
+  month: string;
+  status: ScheduleStatus;
+};
+
+type CsvTeamRow = {
+  nome: string;
+  funcao: string;
+  atividade: string;
+  issues: string[];
+};
+
+type CsvScheduleRow = {
+  item: string;
+  atividade: string;
+  valor: number;
+  mes: string;
+  issues: string[];
+};
+
+type CsvBudgetRow = {
+  fonte: string;
+  elemento: string;
+  descricao: string;
+  unitario: number;
+  qtd: number;
+  valorTotal: number;
+  issues: string[];
+};
+
+type CsvImportResult = {
+  projectId: string;
+  fileName: string;
+  rows: CsvBudgetRow[];
+};
+
+const baseRubrics = [
+  { name: "Alimentação", type: "Custeio", approved: 0, executed: 0 },
+  { name: "Bolsa", type: "Custeio", approved: 0, executed: 0 },
+  { name: "Consultoria", type: "Custeio", approved: 0, executed: 0 },
+  { name: "Diária", type: "Custeio", approved: 0, executed: 0 },
+  { name: "Hospedagem", type: "Custeio", approved: 0, executed: 0 },
+  { name: "Material de Consumo", type: "Custeio", approved: 0, executed: 0 },
+  { name: "Serviços de Terceiros - PF", type: "Custeio", approved: 0, executed: 0 },
+  { name: "Serviços de Terceiros - PJ", type: "Custeio", approved: 0, executed: 0 },
+  { name: "Passagem", type: "Custeio", approved: 0, executed: 0 },
+  { name: "Transporte", type: "Custeio", approved: 0, executed: 0 },
+  { name: "Locomoção", type: "Custeio", approved: 0, executed: 0 },
+  { name: "Pessoal / Pró-labore", type: "Custeio", approved: 0, executed: 0 },
+  { name: "Material Permanente", type: "Capital", approved: 0, executed: 0 },
+];
+
+const projectMonths = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
+const scheduleStatuses: ScheduleStatus[] = ["Não iniciada", "Em andamento", "Concluída", "Atrasada"];
+
+const navItems: { id: View; label: string; icon: typeof LayoutDashboard }[] = [
+  { id: "companies", label: "Empresas e projetos", icon: Building2 },
+  { id: "overview", label: "Visão geral", icon: LayoutDashboard },
+  { id: "schedule", label: "Cronograma", icon: CalendarDays },
+  { id: "entries", label: "Lançamentos", icon: ReceiptText },
+  { id: "resources", label: "Recursos e parcelas", icon: WalletCards },
+  { id: "reconciliation", label: "Conciliação bancária", icon: Landmark },
+  { id: "remaps", label: "Remanejamentos", icon: ArrowRightLeft },
+  { id: "team", label: "Equipe técnica", icon: Users },
+  { id: "documents", label: "Documentos", icon: FolderOpen },
+  { id: "links", label: "Links importantes", icon: Link2 },
+  { id: "reports", label: "Relatórios", icon: BarChart3 },
+];
+
+const viewTitles: Record<View, { eyebrow: string; title: string; subtitle: string }> = {
+  overview: { eyebrow: "Painel do projeto", title: "Visão geral", subtitle: "Acompanhe a execução física e financeira em um só lugar." },
+  companies: { eyebrow: "Estrutura da organização", title: "Empresas e projetos", subtitle: "Cadastre empresas, organize projetos aprovados e alterne entre eles." },
+  team: { eyebrow: "Gestão do projeto", title: "Equipe técnica", subtitle: "Organize funções e atividades dos membros vinculados ao projeto." },
+  schedule: { eyebrow: "Planejamento da execução", title: "Cronograma", subtitle: "Acompanhe atividades, valores e meses previstos para cada etapa." },
+  entries: { eyebrow: "Execução financeira", title: "Lançamentos", subtitle: "Despesas realizadas, documentos e situação da conciliação." },
+  resources: { eyebrow: "Fluxo financeiro", title: "Recursos e parcelas", subtitle: "Liberações, contrapartida e rendimentos da aplicação." },
+  reconciliation: { eyebrow: "Conta vinculada", title: "Conciliação bancária", subtitle: "Confira o fluxo registrado e as referências de conferência do extrato." },
+  remaps: { eyebrow: "Orçamento aprovado", title: "Remanejamentos", subtitle: "Registre e acompanhe transferências entre rubricas." },
+  documents: { eyebrow: "Comprovação", title: "Central de documentos", subtitle: "Monitore cotações, notas fiscais e comprovantes de pagamento." },
+  links: { eyebrow: "Referências do projeto", title: "Links importantes", subtitle: "Organize acessos, portais e referências úteis vinculados a este projeto." },
+  reports: { eyebrow: "Prestação de contas", title: "Relatórios", subtitle: "Consolide a documentação e prepare as entregas ao concedente." },
+};
+
+const money = (value: number) =>
+  new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL", minimumFractionDigits: 2 }).format(value);
+
+const compactMoney = (value: number) =>
+  new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL", notation: "compact", maximumFractionDigits: 1 }).format(value);
+
+const percent = (value: number, total: number) =>
+  total > 0 ? Math.min(100, Math.round((value / total) * 1000) / 10) : 0;
+
+const monthYear = (value: string) => {
+  if (!value) return "a definir";
+  return new Intl.DateTimeFormat("pt-BR", { month: "short", year: "numeric" })
+    .format(new Date(value + "T12:00:00"))
+    .replace(". de ", "/")
+    .replace(" de ", "/");
+};
+
+function StatusBadge({ status }: { status: Expense["status"] | "Aprovado" | "Aguardando aprovação" | "Recebida" | "Prevista" }) {
+  const tone =
+    status === "Conciliado" || status === "Aprovado" || status === "Recebida"
+      ? "success"
+      : status === "Pendente" || status === "Aguardando aprovação"
+        ? "warning"
+        : status === "Em análise"
+          ? "info"
+          : "neutral";
+  return <span className={"status-badge " + tone}><span className="status-dot" />{status}</span>;
+}
+
+function ProgressBar({ value, tone = "green" }: { value: number; tone?: "green" | "amber" | "blue" | "gray" }) {
+  return <div className={"progress-track " + tone} aria-label={String(value) + "% utilizado"}><span style={{ width: String(Math.min(100, value)) + "%" }} /></div>;
+}
+
+type Resource = ResourceEntryDraft & {id: string; projectId: string; documents: DocumentFile[]};
+type Remap = {id: string; projectId: string; from: string; to: string; value: number; reason: string; date: string; status: "Aprovado" | "Aguardando aprovação"; version: number; authorization?: string};
+type BudgetRow = CsvBudgetRow & {id: string; projectId: string};
+type State = {user: AppUser; companies: Company[]; projects: Project[]; expenses: Expense[]; team: TeamMember[]; schedule: ScheduleItem[]; links: ProjectLink[]; resources: Resource[]; budget: BudgetRow[]; remaps: Remap[]};
+const emptyProject: Project = {id:"",companyId:"",name:"Cadastre seu primeiro projeto",code:"",agency:"",period:"",approved:0,counterpart:0,counterpartRealized:0,released:0,executed:0,income:0,version:1};
+const emptyCompany: Company = {id:"",name:"",short:"",cnpj:"",city:"",state:"",responsible:"",email:"",phone:"",version:1};
+export default function Home() {
+  const [state,setState]=useState<State|null>(null),[loading,setLoading]=useState(true),[error,setError]=useState("");
+  const load=async()=>{setError("");try{setState(await api("state"));}catch(e){if(!(e instanceof ApiError && e.status===401))setError((e as Error).message);setState(null);}finally{setLoading(false);}};
+  useEffect(()=>{void load();},[]);
+  if(loading)return <main className="auth-screen" role="status">Carregando seus projetos…</main>;
+  if(error)return <main className="auth-screen"><div className="panel auth-card"><p role="alert">{error}</p><button className="primary-button" onClick={()=>void load()}>Tentar novamente</button></div></main>;
+  if(!state)return <Login onLogin={load}/>;
+  return <Workspace initial={state} onLogout={()=>setState(null)}/>;
+}
+function Workspace({initial,onLogout}: {initial: State;onLogout:()=>void}) {
+
+  const [view, setView] = useState<View>("overview");
+  const [companyList, setCompanyList] = useState<Company[]>(initial.companies);
+  const [projectList, setProjectList] = useState<Project[]>(initial.projects);
+  const [companyId, setCompanyId] = useState(initial.projects[0]?.companyId || initial.companies[0]?.id || "");
+  const [projectId, setProjectId] = useState(initial.projects[0]?.id || "");
+  const [profileCompanyId, setProfileCompanyId] = useState(initial.projects[0]?.companyId || initial.companies[0]?.id || "");
+  const [companyModalOpen, setCompanyModalOpen] = useState(false);
+  const [projectModalOpen, setProjectModalOpen] = useState(false);
+  const [projectModalCompanyId, setProjectModalCompanyId] = useState(initial.projects[0]?.companyId || initial.companies[0]?.id || "");
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [projectMenuOpen, setProjectMenuOpen] = useState(false);
+  const [newEntryOpen, setNewEntryOpen] = useState(false);
+  const [resourceEntryOpen, setResourceEntryOpen] = useState(false);
+  const [linkModalOpen, setLinkModalOpen] = useState(false);
+  const [csvImportOpen, setCsvImportOpen] = useState(false);
+  const [budgetRows,setBudgetRows]=useState(initial.budget);
+  const csvImportResult = budgetRows.some(row=>row.projectId===projectId) ? {projectId,fileName:"Orçamento salvo",rows:budgetRows.filter(row=>row.projectId===projectId)} : null;
+  const [teamImportOpen, setTeamImportOpen] = useState(false);
+  const [scheduleImportOpen, setScheduleImportOpen] = useState(false);
+  const [teamMemberCreateOpen, setTeamMemberCreateOpen] = useState(false);
+  const [editingTeamMember, setEditingTeamMember] = useState<TeamMember | null>(null);
+  const [teamMemberToDelete, setTeamMemberToDelete] = useState<TeamMember | null>(null);
+  const [editingScheduleItem, setEditingScheduleItem] = useState<ScheduleItem | null>(null);
+  const [remapOpen, setRemapOpen] = useState(false);
+  const [selectedExpense, setSelectedExpense] = useState<Expense | null>(null);
+  const [entries, setEntries] = useState(initial.expenses);
+  const [projectLinks, setProjectLinks] = useState(initial.links);
+  const [teamMembers, setTeamMembers] = useState(initial.team);
+  const [scheduleItems, setScheduleItems] = useState(initial.schedule);
+  const [toast, setToast] = useState("");
+  const [resources,setResources]=useState(initial.resources);
+  const [remaps,setRemaps]=useState(initial.remaps);
+  const [busy,setBusy]=useState(false),[saveError,setSaveError]=useState("");
+  const saving=useRef(false);
+  const [accountOpen,setAccountOpen]=useState(false);
+
+  const activeProject = projectList.find((project) => project.id === projectId) || projectList[0] || emptyProject;
+  const activeCompany = companyList.find((company) => company.id === companyId) || companyList[0] || emptyCompany;
+  const companyProjects = projectList.filter((project) => project.companyId === companyId);
+  const projectEntries = entries.filter((entry) => entry.projectId === activeProject.id);
+  const activeProjectLinks = projectLinks.filter((link) => link.projectId === activeProject.id);
+  const activeTeamMembers = teamMembers.filter((member) => member.projectId === activeProject.id);
+  const activeScheduleItems = scheduleItems.filter((item) => item.projectId === activeProject.id);
+  const pendingProjectDocuments = projectEntries.filter((entry) => entry.docs < entry.requiredDocs).length;
+  const projectRequiredDocuments = projectEntries.reduce((sum, entry) => sum + entry.requiredDocs, 0);
+  const projectSentDocuments = projectEntries.reduce((sum, entry) => sum + entry.docs, 0);
+  const projectDocumentCompletion = percent(projectSentDocuments, projectRequiredDocuments);
+  const activeRubrics = useMemo(() => baseRubrics.map(rubric=>({ ...rubric,
+    approved: (budgetRows.filter(row=>row.projectId===activeProject.id&&row.elemento===rubric.name).reduce((sum,row)=>sum+Math.round(row.valorTotal*100),0)+remaps.filter(r=>r.projectId===activeProject.id&&r.status==="Aprovado").reduce((sum,r)=>sum+(r.to===rubric.name?Math.round(r.value*100):r.from===rubric.name?-Math.round(r.value*100):0),0))/100,
+    executed: projectEntries.filter(e=>!e.draft&&e.rubric===rubric.name).reduce((sum,e)=>sum+Math.round(e.value*100),0)/100,
+  })),[activeProject.id,budgetRows,remaps,entries]);
+  const refresh=async()=>{const state:State=await api("state");setCompanyList(state.companies);setProjectList(state.projects);setEntries(state.expenses);setProjectLinks(state.links);setTeamMembers(state.team);setScheduleItems(state.schedule);setResources(state.resources);setBudgetRows(state.budget);setRemaps(state.remaps);return state;};
+  const commit=async(action:()=>Promise<unknown>, after:()=>void, message:string)=>{
+    if(saving.current)return; saving.current=true;setBusy(true);setSaveError("");
+    let saved=false;
+    try{await action();saved=true;after();await refresh();showToast(message);}catch(error){setSaveError(saved?"Operação salva. Não foi possível atualizar a tela. Recarregue a página para ver os dados.":(error as Error).message);if(error instanceof ApiError&&error.status===401)onLogout();}finally{saving.current=false;setBusy(false);}
+  };
+  const showToast = (message: string) => {
+    setToast(message);
+    window.setTimeout(() => setToast(""), 3500);
+  };
+
+  const changeCompany = (nextCompanyId: string) => {
+    const firstProject = projectList.find((project) => project.companyId === nextCompanyId);
+    if (firstProject) {
+      setCompanyId(nextCompanyId);
+      setProjectId(firstProject.id);
+    }
+  };
+
+  const switchProject = (nextProjectId: string) => {
+    const nextProject = projectList.find((project) => project.id === nextProjectId);
+    if (!nextProject) return;
+    setCompanyId(nextProject.companyId);
+    setProjectId(nextProject.id);
+    setProfileCompanyId(nextProject.companyId);
+    setProjectMenuOpen(false);
+    setView("overview");
+  };
+
+  const startProjectCreation = (targetCompanyId = profileCompanyId) => {
+    setProjectMenuOpen(false);
+    setProjectModalCompanyId(targetCompanyId);
+    setProjectModalOpen(true);
+  };
+
+  const createCompany = (company: Omit<Company,"id" | "version">) => commit(async()=>{const saved=await api("companies","POST",company);setProfileCompanyId(saved.id);setProjectModalCompanyId(saved.id);},()=>{setCompanyModalOpen(false);setProjectModalOpen(true);},"Empresa salva. Cadastre o primeiro projeto.");
+  const createProject = (draft: ProjectDraft) => commit(async()=>{const saved=await api("projects","POST",draft);setProjectId(saved.id);setCompanyId(saved.companyId);setProfileCompanyId(saved.companyId);},()=>{setProjectModalOpen(false);setView("overview");},"Projeto cadastrado.");
+  const navigate = (nextView: View) => {setView(nextView);setSidebarOpen(false);window.scrollTo({top:0,behavior:"smooth"});};
+  const addEntry = (entry: ExpenseDraft, draft: boolean, files:Record<string,File>) => commit(()=>api("expenses","POST",{...entry,projectId:activeProject.id,draft},files),()=>{setNewEntryOpen(false);setView("entries");},draft?"Rascunho salvo.":"Despesa registrada.");
+  const addResourceEntry = (entry:ResourceEntryDraft) => { const {proof,...data}=entry; return commit(()=>api("resources","POST",{...data,projectId:activeProject.id},proof?{proof}:undefined),()=>setResourceEntryOpen(false),"Recurso financeiro registrado."); };
+  const addProjectLink = (draft:{name:string;url:string}) => commit(()=>api("links","POST",{...draft,projectId:activeProject.id,url:/^https?:\/\//i.test(draft.url)?draft.url:`https://${draft.url}`}),()=>setLinkModalOpen(false),"Link adicionado.");
+  const openCsvImport=()=>{setNewEntryOpen(false);setCsvImportOpen(true);};
+  const finishCsvImport=(rows:CsvBudgetRow[])=>commit(()=>api("budget/import","POST",{projectId:activeProject.id,rows}),()=>{setCsvImportOpen(false);setView("overview");},"Orçamento importado e salvo.");
+  const finishTeamImport=(rows:CsvTeamRow[])=>commit(()=>api("team/import","POST",{projectId:activeProject.id,rows:rows.map(r=>({name:r.nome,role:r.funcao,activity:r.atividade}))}),()=>setTeamImportOpen(false),"Membros adicionados à equipe.");
+  const finishScheduleImport=(rows:CsvScheduleRow[])=>commit(()=>api("schedule/import","POST",{projectId:activeProject.id,rows:rows.map(r=>({item:r.item,activity:r.atividade,value:r.valor,month:r.mes}))}),()=>setScheduleImportOpen(false),"Cronograma importado.");
+  const saveTeamMember=(updated:TeamMember)=>commit(()=>api("team/"+updated.id,"PATCH",updated),()=>setEditingTeamMember(null),"Membro atualizado.");
+  const createTeamMember=(draft:Pick<TeamMember,"name"|"role"|"activity">)=>commit(()=>api("team","POST",{...draft,projectId:activeProject.id}),()=>setTeamMemberCreateOpen(false),"Membro adicionado.");
+  const deleteTeamMember=(member:TeamMember)=>commit(()=>api("team/"+member.id,"DELETE",{version:member.version}),()=>setTeamMemberToDelete(null),"Membro excluído.");
+  const saveScheduleItem=(updated:ScheduleItem)=>commit(()=>api("schedule/"+updated.id,"PATCH",updated),()=>setEditingScheduleItem(null),"Cronograma atualizado.");
+  const saveRemap=(draft:{from:string;to:string;value:number;reason:string})=>commit(()=>api("remaps","POST",{...draft,projectId:activeProject.id}),()=>setRemapOpen(false),"Solicitação registrada. A aprovação deve ser obtida junto ao concedente.");
+  const approveRemap=(remap:Remap,authorization:string)=>commit(()=>api("remaps/"+remap.id,"PATCH",{version:remap.version,authorization}),()=>{},"Autorização registrada e orçamento atualizado.");
+  const updateExpense=(expense:Expense,action:string,bankReference?:string)=>commit(()=>api("expenses/"+expense.id,"PATCH",{version:expense.version,action,bankReference}),()=>setSelectedExpense(null),"Despesa atualizada.");
+  const uploadExpense=(expense:Expense,files:Record<string,File>)=>commit(()=>api("expenses/"+expense.id+"/documents","POST",{},files),()=>{},"Documentos salvos.");
+  if(!projectList.length)return <main className="auth-screen"><section className="panel auth-card"><h1>Organize seus projetos</h1><p>Comece cadastrando uma empresa e seu primeiro projeto aprovado.</p><button className="primary-button" onClick={()=>companyList.length?startProjectCreation(companyList[0].id):setCompanyModalOpen(true)}>{companyList.length?"Cadastrar projeto":"Cadastrar empresa"}</button><button className="secondary-button" onClick={()=>setAccountOpen(true)}>Conta e acessos</button></section>{companyModalOpen&&<CompanyModal onClose={()=>setCompanyModalOpen(false)} onSave={createCompany}/>} {projectModalOpen&&<ProjectModal companies={companyList} initialCompanyId={projectModalCompanyId} onClose={()=>setProjectModalOpen(false)} onSave={createProject}/>} {accountOpen&&<AccountPanel user={initial.user} onClose={()=>setAccountOpen(false)} onLogout={onLogout}/>} {saveError&&<div role="alert" className="save-error">{saveError}<button onClick={()=>setSaveError("")}>Fechar</button></div>} {busy&&<div className="saving-overlay" role="status">Salvando…</div>}</main>;
+  const header = viewTitles[view];
+
+  return (
+    <div className="app-shell">
+      {busy&&<div className="saving-overlay" role="status">Salvando…</div>}
+      {saveError&&<div role="alert" className="save-error">{saveError}<button onClick={()=>setSaveError("")}>Fechar</button></div>}
+      {accountOpen&&<AccountPanel user={initial.user} onClose={()=>setAccountOpen(false)} onLogout={onLogout}/>}
+      {sidebarOpen && <button className="sidebar-overlay" aria-label="Fechar menu" onClick={() => setSidebarOpen(false)} />}
+      <aside className={"sidebar " + (sidebarOpen ? "open" : "")}>
+        <div className="brand">
+          <div className="brand-mark"><HandCoins size={21} strokeWidth={2.2} /></div>
+          <div><strong>Subvenção</strong><span>gestão de recursos</span></div>
+          <button className="mobile-close" aria-label="Fechar menu" onClick={() => setSidebarOpen(false)}><X size={20} /></button>
+        </div>
+        <nav className="main-nav" aria-label="Navegação principal">
+          <span className="nav-caption">GESTÃO DO PROJETO</span>
+          {navItems.map((item) => {
+            const Icon = item.icon;
+            return (
+              <button key={item.id} className={view === item.id ? "active" : ""} onClick={() => navigate(item.id)}>
+                <Icon size={18} strokeWidth={2} /><span>{item.label}</span>{item.id === "documents" && pendingProjectDocuments > 0 && <em>{pendingProjectDocuments}</em>}
+              </button>
+            );
+          })}
+        </nav>
+        <div className="sidebar-bottom">
+          <button onClick={()=>setAccountOpen(true)}><Users size={18} /><span>Equipe e acessos</span></button>
+          <button onClick={()=>setAccountOpen(true)}><Settings size={18} /><span>Configurações</span></button>
+          <div className="help-card">
+            <div className="help-icon"><ShieldCheck size={19} /></div>
+            <strong>{projectEntries.length > 0 ? "Projeto organizado" : "Projeto pronto para começar"}</strong>
+            <p>{projectEntries.length > 0 ? `${projectDocumentCompletion}% dos comprovantes obrigatórios já foram anexados.` : "O checklist será atualizado com o primeiro lançamento."}</p>
+            <button onClick={() => navigate("documents")}>{pendingProjectDocuments > 0 ? "Ver pendências" : "Ver checklist"} <ArrowRight size={14} /></button>
+          </div>
+          <div className="user-card"><div className="avatar">{initial.user.name.slice(0,2).toUpperCase()}</div><div><strong>{initial.user.name}</strong><span>{initial.user.role === "viewer" ? "Consulta" : "Gestão de projetos"}</span></div><MoreHorizontal size={18} /></div>
+        </div>
+      </aside>
+
+      <main className="main-area">
+        <header className="topbar">
+          <button className="menu-button" aria-label="Abrir menu" onClick={() => setSidebarOpen(true)}><Menu size={22} /></button>
+          <div className="project-switcher-wrap">
+            <button className="project-switcher" onClick={() => setProjectMenuOpen((open) => !open)} aria-expanded={projectMenuOpen}>
+              <div className="company-symbol"><Building2 size={18} /></div>
+              <div className="project-switcher-copy"><span>{activeCompany.short} · {activeProject.code}</span><strong>{activeProject.name}</strong></div>
+              <ChevronDown size={18} className={projectMenuOpen ? "rotate" : ""} />
+            </button>
+            {projectMenuOpen && (
+              <div className="project-menu">
+                <label>Empresa</label>
+                <select aria-label="Empresa ativa" value={companyId} onChange={(event) => changeCompany(event.target.value)}>{companyList.map((company) => <option value={company.id} key={company.id}>{company.name}</option>)}</select>
+                <label>Projeto</label>
+                <select aria-label="Projeto ativo" value={projectId} onChange={(event) => switchProject(event.target.value)}>{companyProjects.map((project) => <option value={project.id} key={project.id}>{project.name}</option>)}</select>
+                <div className="project-menu-meta"><span><CalendarDays size={14} /> {activeProject.period}</span><span><ShieldCheck size={14} /> {activeProject.agency}</span></div>
+                <div className="project-menu-actions">
+                  <button onClick={() => { setProjectMenuOpen(false); setCompanyModalOpen(true); }}><Plus size={15} /> Nova Empresa</button>
+                  <button onClick={() => startProjectCreation(companyId)}><Plus size={15} /> Novo projeto</button>
+                </div>
+              </div>
+            )}
+          </div>
+          <div className="topbar-actions">
+
+
+            <button className="topbar-avatar" aria-label="Minha conta" onClick={()=>setAccountOpen(true)}>{initial.user.name.slice(0,2).toUpperCase()}</button>
+          </div>
+        </header>
+
+        <div className="content">
+          <div className="page-heading">
+            <div><span className="eyebrow">{header.eyebrow}</span><h1>{header.title}</h1><p>{header.subtitle}</p></div>
+            <div className="heading-actions">
+              {view === "reports" && <button className="secondary-button" onClick={() => window.location.assign(`/api/reports/${activeProject.id}`)}><Download size={17} /> Exportar consolidado</button>}
+              {(view === "overview" || view === "entries") && <button className="secondary-button" onClick={openCsvImport}><FileSpreadsheet size={17} /> Importar CSV</button>}
+              {view === "companies" ? (
+                <>
+                  <button className="secondary-button" onClick={() => startProjectCreation(profileCompanyId)}><Rocket size={17} /> Novo projeto</button>
+                  <button className="primary-button" onClick={() => setCompanyModalOpen(true)}><Plus size={18} /> Nova empresa</button>
+                </>
+              ) : view === "team" ? (
+                <>
+                  <button className="secondary-button" onClick={() => setTeamImportOpen(true)}><FileSpreadsheet size={18} /> Importar CSV</button>
+                  <button className="primary-button" onClick={() => setTeamMemberCreateOpen(true)}><Plus size={18} /> Adicionar membro</button>
+                </>
+              ) : view === "schedule" ? (
+                <button className="primary-button" onClick={() => setScheduleImportOpen(true)}><FileSpreadsheet size={18} /> Importar cronograma</button>
+              ) : view === "resources" ? (
+                <button className="primary-button" onClick={() => setResourceEntryOpen(true)}><ArrowDownToLine size={18} /> Lançar recurso</button>
+              ) : view === "remaps" ? (
+                <button className="primary-button" onClick={() => setRemapOpen(true)}><Plus size={18} /> Solicitar remanejamento</button>
+              ) : view === "links" ? (
+                <button className="primary-button" onClick={() => setLinkModalOpen(true)}><Plus size={18} /> Adicionar link</button>
+              ) : view === "reconciliation" ? (
+                <span className="automatic-heading-status"><RefreshCw size={16} /> Registros salvos</span>
+              ) : (
+                <button className="primary-button" onClick={() => setNewEntryOpen(true)}><Plus size={18} /> Novo lançamento</button>
+              )}
+            </div>
+          </div>
+
+          {view === "overview" && <Overview project={activeProject} rubrics={activeRubrics} entries={projectEntries} navigate={navigate} openEntry={setSelectedExpense} newEntry={() => setNewEntryOpen(true)} importCsv={openCsvImport} />}
+          {view === "companies" && <CompaniesView companies={companyList} projects={projectList} selectedCompanyId={profileCompanyId} activeProjectId={projectId} onSelectCompany={setProfileCompanyId} onNewCompany={() => setCompanyModalOpen(true)} onNewProject={startProjectCreation} onSwitchProject={switchProject} />}
+          {view === "team" && <TeamView project={activeProject} members={activeTeamMembers} onImport={() => setTeamImportOpen(true)} onAdd={() => setTeamMemberCreateOpen(true)} onEdit={setEditingTeamMember} onDelete={setTeamMemberToDelete} />}
+          {view === "schedule" && <ScheduleView project={activeProject} items={activeScheduleItems} onImport={() => setScheduleImportOpen(true)} onEdit={setEditingScheduleItem} />}
+          {view === "entries" && <Entries projectId={activeProject.id} entries={projectEntries} openEntry={setSelectedExpense} newEntry={() => setNewEntryOpen(true)} importCsv={openCsvImport} csvImport={csvImportResult?.projectId === activeProject.id ? csvImportResult : null} />}
+          {view === "resources" && <Resources project={activeProject} resources={resources.filter(r=>r.projectId===activeProject.id)} onAdd={()=>setResourceEntryOpen(true)} />}
+          {view === "reconciliation" && <Reconciliation project={activeProject} entries={projectEntries} resources={resources.filter(r=>r.projectId===activeProject.id)} />}
+          {view === "remaps" && <Remaps project={activeProject} remaps={remaps.filter(r=>r.projectId===activeProject.id)} onApprove={approveRemap} admin={initial.user.role==="admin"} openModal={() => setRemapOpen(true)} />}
+          {view === "documents" && <Documents entries={projectEntries} openEntry={setSelectedExpense} />}
+          {view === "links" && <ProjectLinksView project={activeProject} links={activeProjectLinks} onAdd={() => setLinkModalOpen(true)} />}
+          {view === "reports" && <Reports project={activeProject} entries={projectEntries} />}
+        </div>
+      </main>
+
+      {newEntryOpen && <NewEntryModal onClose={() => setNewEntryOpen(false)} onSave={addEntry} onImportCsv={openCsvImport} showToast={showToast} />}
+      {resourceEntryOpen && <ResourceEntryModal project={activeProject} onClose={() => setResourceEntryOpen(false)} onSave={addResourceEntry} />}
+      {linkModalOpen && <ProjectLinkModal project={activeProject} onClose={() => setLinkModalOpen(false)} onSave={addProjectLink} />}
+      {companyModalOpen && <CompanyModal onClose={() => setCompanyModalOpen(false)} onSave={createCompany} />}
+      {projectModalOpen && <ProjectModal companies={companyList} initialCompanyId={projectModalCompanyId} onClose={() => setProjectModalOpen(false)} onSave={createProject} />}
+      {csvImportOpen && <CsvImportModal onClose={() => setCsvImportOpen(false)} onImport={finishCsvImport} />}
+      {teamImportOpen && <TeamCsvImportModal project={activeProject} onClose={() => setTeamImportOpen(false)} onImport={finishTeamImport} />}
+      {scheduleImportOpen && <ScheduleCsvImportModal project={activeProject} onClose={() => setScheduleImportOpen(false)} onImport={finishScheduleImport} />}
+      {teamMemberCreateOpen && <TeamMemberCreateModal project={activeProject} onClose={() => setTeamMemberCreateOpen(false)} onSave={createTeamMember} />}
+      {editingTeamMember && <TeamMemberEditModal member={editingTeamMember} onClose={() => setEditingTeamMember(null)} onSave={saveTeamMember} />}
+      {teamMemberToDelete && <DeleteTeamMemberModal member={teamMemberToDelete} onClose={() => setTeamMemberToDelete(null)} onConfirm={deleteTeamMember} />}
+      {editingScheduleItem && <ScheduleItemEditModal item={editingScheduleItem} onClose={() => setEditingScheduleItem(null)} onSave={saveScheduleItem} />}
+      {remapOpen && <RemapModal onClose={() => setRemapOpen(false)} onSave={saveRemap} />}
+      {selectedExpense && <ExpenseModal expense={entries.find(e=>e.id===selectedExpense.id)||selectedExpense} onClose={() => setSelectedExpense(null)} onUpload={uploadExpense} onUpdate={updateExpense} admin={initial.user.role==="admin"} />}
+      {toast && <div className="toast" role="status"><CheckCircle2 size={19} /><span>{toast}</span><button aria-label="Fechar aviso" onClick={() => setToast("")}><X size={16} /></button></div>}
+    </div>
+  );
+}
+
+function CompaniesView({
+  companies,
+  projects,
+  selectedCompanyId,
+  activeProjectId,
+  onSelectCompany,
+  onNewCompany,
+  onNewProject,
+  onSwitchProject,
+}: {
+  companies: Company[];
+  projects: Project[];
+  selectedCompanyId: string;
+  activeProjectId: string;
+  onSelectCompany: (id: string) => void;
+  onNewCompany: () => void;
+  onNewProject: (companyId?: string) => void;
+  onSwitchProject: (projectId: string) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const selectedCompany = companies.find((company) => company.id === selectedCompanyId) || companies[0];
+  const selectedProjects = projects.filter((project) => project.companyId === selectedCompany.id);
+  const filteredCompanies = companies.filter((company) => (company.name + company.short + company.cnpj).toLowerCase().includes(query.toLowerCase()));
+  const totalApproved = projects.reduce((sum, project) => sum + project.approved, 0);
+  const executing = projects.filter((project) => project.status !== "Concluído").length;
+
+  return (
+    <>
+      <section className="organization-summary">
+        <article><span className="organization-stat-icon"><Building2 size={20} /></span><div><span>Empresas cadastradas</span><strong>{companies.length}</strong><small>perfis ativos</small></div></article>
+        <article><span className="organization-stat-icon blue"><Rocket size={20} /></span><div><span>Projetos aprovados</span><strong>{projects.length}</strong><small>{executing} em acompanhamento</small></div></article>
+        <article><span className="organization-stat-icon amber"><CircleDollarSign size={20} /></span><div><span>Subvenção gerenciada</span><strong>{compactMoney(totalApproved)}</strong><small>em todos os projetos</small></div></article>
+        <article><span className="organization-stat-icon green"><ShieldCheck size={20} /></span><div><span>Cadastros completos</span><strong>100%</strong><small>empresas com responsável</small></div></article>
+      </section>
+
+      <section className="company-workspace">
+        <aside className="panel company-directory">
+          <div className="company-directory-header">
+            <div><h2>Minhas empresas</h2><span>{companies.length} perfis cadastrados</span></div>
+            <button className="icon-button" aria-label="Nova empresa" onClick={onNewCompany}><Plus size={17} /></button>
+          </div>
+          <div className="company-search"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar empresa ou CNPJ" /></div>
+          <div className="company-list">
+            {filteredCompanies.map((company) => {
+              const count = projects.filter((project) => project.companyId === company.id).length;
+              return (
+                <button key={company.id} className={selectedCompany.id === company.id ? "active" : ""} onClick={() => onSelectCompany(company.id)}>
+                  <span className="company-list-avatar">{company.short.slice(0, 2).toUpperCase()}</span>
+                  <span><strong>{company.short}</strong><small>{company.cnpj}</small><em>{count} {count === 1 ? "projeto" : "projetos"}</em></span>
+                  <ChevronRight size={17} />
+                </button>
+              );
+            })}
+          </div>
+          <button className="company-add-button" onClick={onNewCompany}><Plus size={16} /> Cadastrar nova empresa</button>
+        </aside>
+
+        <article className="panel company-profile-panel">
+          <div className="company-profile-hero">
+            <span className="company-profile-avatar">{selectedCompany.short.slice(0, 2).toUpperCase()}</span>
+            <div><span className="company-profile-label">Perfil da empresa</span><h2>{selectedCompany.name}</h2><p>{selectedCompany.short} · CNPJ {selectedCompany.cnpj}</p></div>
+            <span className="company-active-badge"><span /> Cadastro ativo</span>
+          </div>
+
+          <div className="company-profile-details">
+            <div><span className="profile-detail-icon"><IdCard size={17} /></span><p><small>CNPJ</small><strong>{selectedCompany.cnpj}</strong></p></div>
+            <div><span className="profile-detail-icon"><MapPin size={17} /></span><p><small>Sede</small><strong>{selectedCompany.city} · {selectedCompany.state}</strong></p></div>
+            <div><span className="profile-detail-icon"><Users size={17} /></span><p><small>Responsável</small><strong>{selectedCompany.responsible}</strong></p></div>
+            <div><span className="profile-detail-icon"><Mail size={17} /></span><p><small>E-mail</small><strong>{selectedCompany.email}</strong></p></div>
+            <div><span className="profile-detail-icon"><Phone size={17} /></span><p><small>Telefone</small><strong>{selectedCompany.phone}</strong></p></div>
+          </div>
+
+          <div className="company-projects-header">
+            <div><span>Projetos aprovados</span><h3>{selectedProjects.length} {selectedProjects.length === 1 ? "projeto vinculado" : "projetos vinculados"}</h3></div>
+            <button className="primary-button small" onClick={() => onNewProject(selectedCompany.id)}><Plus size={16} /> Novo projeto</button>
+          </div>
+
+          {selectedProjects.length > 0 ? (
+            <div className="company-project-grid">
+              {selectedProjects.map((project) => {
+                const execution = percent(project.executed, project.approved);
+                const isActive = project.id === activeProjectId;
+                return (
+                  <article className={"company-project-card " + (isActive ? "active" : "")} key={project.id}>
+                    <div className="company-project-card-top">
+                      <span className={"project-status " + (project.status === "A iniciar" ? "starting" : "")}><span />{project.status || "Em execução"}</span>
+                      {isActive && <span className="current-project-label">Projeto atual</span>}
+                    </div>
+                    <div className="company-project-name"><span><Rocket size={18} /></span><div><strong>{project.name}</strong><small>{project.agency} · {project.code}</small></div></div>
+                    <div className="company-project-period"><CalendarDays size={14} /> {project.period}</div>
+                    <div className="company-project-values"><div><span>Aprovado</span><strong>{money(project.approved)}</strong></div><div><span>Executado</span><strong>{execution}%</strong></div></div>
+                    <ProgressBar value={execution} tone={execution === 0 ? "gray" : "green"} />
+                    <button onClick={() => onSwitchProject(project.id)}>{isActive ? "Abrir painel" : "Selecionar projeto"} <ArrowRight size={15} /></button>
+                  </article>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="company-project-empty">
+              <span><Rocket size={25} /></span>
+              <strong>Nenhum projeto cadastrado</strong>
+              <p>Cadastre o primeiro projeto aprovado desta empresa para iniciar o acompanhamento.</p>
+              <button className="primary-button" onClick={() => onNewProject(selectedCompany.id)}><Plus size={17} /> Criar primeiro projeto</button>
+            </div>
+          )}
+        </article>
+      </section>
+    </>
+  );
+}
+
+function CompanyModal({ onClose, onSave }: { onClose: () => void; onSave: (company: Omit<Company, "id" | "version">) => void }) {
+  const [name, setName] = useState("");
+  const [short, setShort] = useState("");
+  const [cnpj, setCnpj] = useState("");
+  const [city, setCity] = useState("");
+  const [state, setState] = useState("");
+  const [responsible, setResponsible] = useState("");
+  const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
+  const valid = Boolean(name && short && cnpj && city && state && responsible && email);
+
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+      <div className="modal large company-modal" role="dialog" aria-modal="true" aria-labelledby="company-modal-title">
+        <div className="modal-header"><div><span>Novo cadastro</span><h2 id="company-modal-title">Criar perfil da empresa</h2></div><button className="icon-button" aria-label="Fechar" onClick={onClose}><X size={19} /></button></div>
+        <div className="creation-flow">
+          <div className="active"><span>1</span><p><strong>Perfil da empresa</strong><small>Dados cadastrais</small></p></div>
+          <i />
+          <div><span>2</span><p><strong>Projeto aprovado</strong><small>Recursos e vigência</small></p></div>
+        </div>
+        <div className="modal-body">
+          <div className="form-section-title"><Building2 size={17} /><div><strong>Dados da organização</strong><span>Informações utilizadas nos projetos e relatórios.</span></div></div>
+          <div className="form-grid">
+            <label className="field full"><span>Razão social *</span><input value={name} onChange={(event) => setName(event.target.value)} placeholder="Nome empresarial completo" /></label>
+            <label className="field"><span>Nome fantasia *</span><input value={short} onChange={(event) => setShort(event.target.value)} placeholder="Como a empresa será exibida" /></label>
+            <label className="field"><span>CNPJ *</span><input value={cnpj} onChange={(event) => setCnpj(event.target.value)} placeholder="00.000.000/0000-00" /></label>
+            <label className="field"><span>Cidade *</span><input value={city} onChange={(event) => setCity(event.target.value)} placeholder="Município" /></label>
+            <label className="field"><span>UF *</span><select value={state} onChange={(event) => setState(event.target.value)}><option value="">Selecione</option>{["AC","AL","AP","AM","BA","CE","DF","ES","GO","MA","MT","MS","MG","PA","PB","PR","PE","PI","RJ","RN","RS","RO","RR","SC","SP","SE","TO"].map((uf) => <option key={uf}>{uf}</option>)}</select></label>
+          </div>
+          <div className="form-section-title second"><Users size={17} /><div><strong>Contato responsável</strong><span>Pessoa responsável pela gestão dos projetos.</span></div></div>
+          <div className="form-grid">
+            <label className="field full"><span>Nome do responsável *</span><input value={responsible} onChange={(event) => setResponsible(event.target.value)} placeholder="Nome completo" /></label>
+            <label className="field"><span>E-mail *</span><input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="responsavel@empresa.com.br" /></label>
+            <label className="field"><span>Telefone</span><input value={phone} onChange={(event) => setPhone(event.target.value)} placeholder="(00) 0000-0000" /></label>
+          </div>
+        </div>
+        <div className="modal-footer"><button className="secondary-button" onClick={onClose}>Cancelar</button><button className="primary-button" disabled={!valid} onClick={() => onSave({ name, short, cnpj, city, state, responsible, email, phone })}>Salvar e criar projeto <ArrowRight size={17} /></button></div>
+      </div>
+    </div>
+  );
+}
+
+function ProjectModal({
+  companies,
+  initialCompanyId,
+  onClose,
+  onSave,
+}: {
+  companies: Company[];
+  initialCompanyId: string;
+  onClose: () => void;
+  onSave: (project: ProjectDraft) => void;
+}) {
+  const [companyId, setCompanyId] = useState(initialCompanyId);
+  const [name, setName] = useState("");
+  const [code, setCode] = useState("");
+  const [agency, setAgency] = useState("FINEP");
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
+  const [approved, setApproved] = useState("");
+  const [counterpart, setCounterpart] = useState("");
+  const [installments, setInstallments] = useState("4");
+  const valid = Boolean(companyId && name && code && agency && startDate && endDate && Number(approved) > 0 && Number(installments) > 0);
+  const company = companies.find((item) => item.id === companyId);
+
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+      <div className="modal large project-modal" role="dialog" aria-modal="true" aria-labelledby="project-modal-title">
+        <div className="modal-header"><div><span>Projeto aprovado</span><h2 id="project-modal-title">Cadastrar novo projeto</h2></div><button className="icon-button" aria-label="Fechar" onClick={onClose}><X size={19} /></button></div>
+        <div className="creation-flow">
+          <div className="done"><span><Check size={14} /></span><p><strong>Perfil da empresa</strong><small>{company?.short || "Empresa selecionada"}</small></p></div>
+          <i />
+          <div className="active"><span>2</span><p><strong>Projeto aprovado</strong><small>Recursos e vigência</small></p></div>
+        </div>
+        <div className="modal-body">
+          <div className="form-section-title"><Rocket size={17} /><div><strong>Identificação do projeto</strong><span>Dados do instrumento de concessão aprovado.</span></div></div>
+          <div className="form-grid">
+            <label className="field full"><span>Empresa beneficiária *</span><select value={companyId} onChange={(event) => setCompanyId(event.target.value)}>{companies.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+            <label className="field full"><span>Nome do projeto *</span><input value={name} onChange={(event) => setName(event.target.value)} placeholder="Título oficial do projeto aprovado" /></label>
+            <label className="field"><span>Número do convênio / termo *</span><input value={code} onChange={(event) => setCode(event.target.value)} placeholder="Ex.: SUBV-2026-001" /></label>
+            <label className="field"><span>Órgão concedente *</span><select value={agency} onChange={(event) => setAgency(event.target.value)}><option>FINEP</option><option>EMBRAPII</option><option>FACEPE</option><option>CNPq</option><option>BNDES</option><option>Outro</option></select></label>
+            <label className="field"><span>Início da vigência *</span><input type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} /></label>
+            <label className="field"><span>Fim da vigência *</span><input type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} /></label>
+          </div>
+          <div className="form-section-title second"><CircleDollarSign size={17} /><div><strong>Recursos aprovados</strong><span>Valores que formarão o orçamento inicial do projeto.</span></div></div>
+          <div className="form-grid project-values-form">
+            <label className="field money-field"><span>Subvenção aprovada *</span><div><b>R$</b><input type="number" min="0" value={approved} onChange={(event) => setApproved(event.target.value)} placeholder="0,00" /></div></label>
+            <label className="field money-field"><span>Contrapartida pactuada</span><div><b>R$</b><input type="number" min="0" value={counterpart} onChange={(event) => setCounterpart(event.target.value)} placeholder="0,00" /></div></label>
+            <label className="field full"><span>Número de parcelas *</span><select value={installments} onChange={(event) => setInstallments(event.target.value)}>{[1,2,3,4,5,6,7,8,9,10,11,12].map((number) => <option key={number} value={number}>{number} {number === 1 ? "parcela" : "parcelas"}</option>)}</select></label>
+          </div>
+          <div className="project-create-note"><ShieldCheck size={17} /><span><strong>O projeto será criado como “A iniciar”.</strong> Depois você poderá importar as rubricas, registrar as parcelas e anexar o instrumento aprovado.</span></div>
+        </div>
+        <div className="modal-footer"><button className="secondary-button" onClick={onClose}>Cancelar</button><button className="primary-button" disabled={!valid} onClick={() => onSave({ companyId, name, code, agency, startDate, endDate, approved: Number(approved), counterpart: Number(counterpart) || 0, installments: Number(installments) })}>Criar e acessar projeto <Rocket size={17} /></button></div>
+      </div>
+    </div>
+  );
+}
+
+function Overview({
+  project,
+  rubrics,
+  entries,
+  navigate,
+  openEntry,
+  newEntry,
+  importCsv,
+}: {
+  project: Project;
+  rubrics: typeof baseRubrics;
+  entries: Expense[];
+  navigate: (view: View) => void;
+  openEntry: (expense: Expense) => void;
+  newEntry: () => void;
+  importCsv: () => void;
+}) {
+  const [rubricFilter, setRubricFilter] = useState("Todas");
+  const executedPct = percent(project.executed, project.approved + project.counterpart);
+  const releasedPct = percent(project.released, project.approved);
+  const counterpartPct = percent(project.counterpartRealized, project.counterpart);
+  const balance = project.released + project.counterpartRealized + project.income - project.executed;
+  const filteredRubrics = rubrics.filter((rubric) => rubricFilter === "Todas" || rubric.type === rubricFilter);
+  const installmentCount = project.installments || 5;
+  const receivedInstallments = project.receivedInstallments?.length || 0;
+  const pendingDocs = entries.filter((entry) => entry.docs < entry.requiredDocs).length;
+  const pendingReview = entries.filter((entry) => entry.status !== "Conciliado").length;
+  const hasBudget = rubrics.some((rubric) => rubric.approved > 0);
+
+  return (
+    <>
+      {entries.length > 0 ? (
+        <section className="notice-banner">
+          <div className="notice-icon"><AlertCircle size={19} /></div>
+          <div><strong>{pendingDocs + pendingReview} pendências precisam da sua atenção</strong><span>Há {pendingDocs} lançamentos com documentos incompletos e {pendingReview} aguardando revisão.</span></div>
+          <button onClick={() => navigate("documents")}>Revisar agora <ArrowRight size={16} /></button>
+        </section>
+      ) : hasBudget ? (
+        <section className="notice-banner onboarding-notice">
+          <div className="notice-icon"><CheckCircle2 size={19} /></div>
+          <div><strong>Orçamento importado e pronto para execução</strong><span>As rubricas já estão preenchidas. Agora registre a primeira despesa deste projeto.</span></div>
+          <button onClick={newEntry}>Primeiro lançamento <ArrowRight size={16} /></button>
+        </section>
+      ) : (
+        <section className="notice-banner onboarding-notice">
+          <div className="notice-icon"><Rocket size={19} /></div>
+          <div><strong>Projeto criado — prepare o orçamento inicial</strong><span>Importe o CSV de rubricas para começar a acompanhar a execução deste projeto.</span></div>
+          <button onClick={importCsv}>Importar rubricas <ArrowRight size={16} /></button>
+        </section>
+      )}
+
+      <section className="metrics-grid">
+        <article className="metric-card featured">
+          <div className="metric-card-head"><span>Subvenção aprovada</span><div className="metric-icon"><CircleDollarSign size={20} /></div></div>
+          <strong>{money(project.approved)}</strong>
+          <div className="metric-footer"><ShieldCheck size={14} /> {project.agency} · {project.code}</div>
+        </article>
+        <article className="metric-card">
+          <div className="metric-card-head"><span>Recursos liberados</span><div className="metric-icon blue"><ArrowDownToLine size={20} /></div></div>
+          <strong>{money(project.released)}</strong>
+          <div className="metric-progress-row"><ProgressBar value={releasedPct} tone="blue" /><b>{releasedPct}%</b></div>
+          <div className="metric-footer muted">{receivedInstallments} de {installmentCount} parcelas recebidas</div>
+        </article>
+        <article className="metric-card">
+          <div className="metric-card-head"><span>Valor executado</span><div className="metric-icon green"><Gauge size={20} /></div></div>
+          <strong>{money(project.executed)}</strong>
+          <div className="metric-progress-row"><ProgressBar value={executedPct} /><b>{executedPct}%</b></div>
+          <div className="metric-footer muted">{money(project.approved + project.counterpart - project.executed)} ainda não utilizados</div>
+        </article>
+        <article className="metric-card">
+          <div className="metric-card-head"><span>Saldo em conta</span><div className="metric-icon amber"><Landmark size={20} /></div></div>
+          <strong>{money(balance)}</strong>
+          <div className="metric-footer positive"><RefreshCw size={14} /> Atualizado com os registros salvos</div>
+        </article>
+      </section>
+
+      <section className="overview-grid">
+        <article className="panel rubric-panel">
+          <div className="panel-header">
+            <div><h2>Execução por rubrica</h2><p>Percentual utilizado sobre o orçamento vigente</p></div>
+            <button className="text-button" onClick={() => navigate("entries")}>Ver lançamentos <ArrowRight size={15} /></button>
+          </div>
+          <div className="segmented-control">
+            {["Todas", "Custeio", "Capital"].map((filter) => <button key={filter} onClick={() => setRubricFilter(filter)} className={rubricFilter === filter ? "active" : ""}>{filter}</button>)}
+          </div>
+          <div className="rubric-list">
+            {filteredRubrics.map((rubric) => {
+              const used = percent(rubric.executed, rubric.approved);
+              return (
+                <div className="rubric-row" key={rubric.name}>
+                  <div className="rubric-topline">
+                    <div><span className={"rubric-type " + (rubric.type === "Capital" ? "capital" : "")}>{rubric.type}</span><strong>{rubric.name}</strong></div>
+                    <div className="rubric-values"><strong>{money(rubric.executed)}</strong><span>de {money(rubric.approved)}</span><b>{used}%</b></div>
+                  </div>
+                  <ProgressBar value={used} tone={used === 0 ? "gray" : used > 75 ? "amber" : "green"} />
+                </div>
+              );
+            })}
+          </div>
+        </article>
+
+        <div className="side-stack">
+          <article className="panel execution-card">
+            <div className="panel-header compact"><div><h2>Execução global</h2><p>Subvenção + contrapartida</p></div></div>
+            <div className="donut-row">
+              <div className="donut" style={{ background: "conic-gradient(#1f7a5a 0deg " + String(executedPct * 3.6) + "deg, #e7ece9 " + String(executedPct * 3.6) + "deg 360deg)" }}><div><strong>{executedPct}%</strong><span>executado</span></div></div>
+              <div className="donut-legend">
+                <span><i className="legend-dot subsidy" />Despesas<b>{compactMoney(project.executed)}</b></span>
+                <span><i className="legend-dot counterpart" />Aportes próprios<b>{compactMoney(project.counterpartRealized)}</b></span>
+                <span><i className="legend-dot remaining" />A executar<b>{compactMoney(project.approved + project.counterpart - project.executed)}</b></span>
+              </div>
+            </div>
+            <div className="counterpart-box">
+              <div><span>Contrapartida realizada</span><b>{counterpartPct}%</b></div>
+              <ProgressBar value={counterpartPct} tone="amber" />
+              <p>{money(project.counterpartRealized)} de {money(project.counterpart)}</p>
+            </div>
+          </article>
+
+          <article className="panel installments-card">
+            <div className="panel-header compact"><div><h2>Fluxo de recursos</h2><p>Parcelas previstas e recebidas</p></div><button className="text-button" onClick={() => navigate("resources")}>Detalhes</button></div>
+            <div className="installment-timeline" style={{ gridTemplateColumns: `repeat(${installmentCount}, minmax(72px, 1fr))` }}>
+              {Array.from({ length: installmentCount }, (_, index) => index + 1).map((installment) => (
+                <div className={"installment-step " + ((project.receivedInstallments || []).includes(installment) ? "done" : "next")} key={installment}>
+                  <span>{(project.receivedInstallments || []).includes(installment) ? <Check size={14} /> : installment}</span>
+                  <div><strong>{installment}ª parcela</strong><small>{(project.receivedInstallments || []).includes(installment) ? "Recebida" : "Prevista"}</small></div>
+                </div>
+              ))}
+            </div>
+            <div className="income-row"><div className="income-icon"><Banknote size={18} /></div><div><span>Rendimentos acumulados</span><strong>{money(project.income)}</strong></div><ArrowRight size={17} /></div>
+          </article>
+        </div>
+      </section>
+
+      <section className="panel recent-panel">
+        <div className="panel-header"><div><h2>Lançamentos recentes</h2><p>Últimas movimentações registradas no projeto</p></div><button className="secondary-button small" onClick={newEntry}><Plus size={16} /> Adicionar despesa</button></div>
+        {entries.length > 0 ? <ExpenseTable entries={entries.slice(0, 5)} onOpen={openEntry} /> : <div className="empty-state compact"><ReceiptText size={27} /><strong>Nenhum lançamento neste projeto</strong><p>Importe o orçamento ou registre a primeira despesa.</p><button className="primary-button" onClick={newEntry}><Plus size={17} /> Primeiro lançamento</button></div>}
+        <button className="full-width-link" onClick={() => navigate("entries")}>Ver todos os lançamentos <ArrowRight size={16} /></button>
+      </section>
+    </>
+  );
+}
+
+function ExpenseTable({ entries, onOpen }: { entries: Expense[]; onOpen: (expense: Expense) => void }) {
+  return (
+    <div className="table-wrap">
+      <table className="data-table">
+        <thead><tr><th>Data / ID</th><th>Fornecedor e descrição</th><th>Rubrica</th><th>Documentos</th><th>Valor</th><th>Situação</th><th /></tr></thead>
+        <tbody>
+          {entries.map((entry) => (
+            <tr key={entry.id} onClick={() => onOpen(entry)}>
+              <td><strong>{entry.date}</strong><span>{entry.id}</span></td>
+              <td><strong>{entry.supplier}</strong><span>{entry.description}</span></td>
+              <td><span className="category-pill">{entry.rubric}</span></td>
+              <td><span className={entry.docs === entry.requiredDocs ? "docs-count complete" : "docs-count incomplete"}>{entry.docs === entry.requiredDocs ? <FileCheck2 size={15} /> : <AlertCircle size={15} />}{entry.docs}/{entry.requiredDocs} anexos</span></td>
+              <td className="value-cell">{money(entry.value)}</td>
+              <td><StatusBadge status={entry.status} /></td>
+              <td><button className="row-button" aria-label={"Abrir " + entry.id}><ChevronRight size={17} /></button></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function Entries({
+  entries,
+  openEntry,
+  newEntry,
+  importCsv,
+  csvImport,
+  projectId,
+}: {
+  entries: Expense[];
+  openEntry: (expense: Expense) => void;
+  newEntry: () => void;
+  importCsv: () => void;
+  csvImport: CsvImportResult | null;
+  projectId: string;
+}) {
+  const [query, setQuery] = useState("");
+  const [status, setStatus] = useState("Todos");
+  const [rubricFilter,setRubricFilter]=useState("Todas as rubricas"),[start,setStart]=useState(""),[end,setEnd]=useState("");
+  const filtered = entries.filter((entry) => {
+    const matchesQuery = (entry.supplier + entry.description + entry.rubric + entry.id).toLowerCase().includes(query.toLowerCase());
+    return matchesQuery && (status === "Todos" || entry.status === status) && (rubricFilter === "Todas as rubricas" || entry.rubric === rubricFilter) && (!start || entry.date >= start) && (!end || entry.date <= end);
+  });
+  const total = filtered.filter(e=>!e.draft).reduce((sum, entry) => sum + Math.round(entry.value*100), 0)/100;
+  const importedTotal = csvImport?.rows.reduce((sum, row) => sum + row.valorTotal, 0) || 0;
+  const importedElements = csvImport ? Array.from(new Set(csvImport.rows.map((row) => row.elemento))) : [];
+  return (
+    <>
+      {csvImport && (
+        <section className="csv-imported-banner">
+          <div className="csv-imported-icon"><FileSpreadsheet size={22} /></div>
+          <div className="csv-imported-copy">
+            <span>Importação concluída</span>
+            <strong>{csvImport.fileName}</strong>
+            <p>{csvImport.rows.length} itens distribuídos em {importedElements.length} rubricas foram preenchidos automaticamente.</p>
+          </div>
+          <div className="csv-imported-elements">
+            {importedElements.slice(0, 3).map((element) => <span key={element}>{element}</span>)}
+            {importedElements.length > 3 && <span>+{importedElements.length - 3}</span>}
+          </div>
+          <div className="csv-imported-total"><span>Valor importado</span><strong>{money(importedTotal)}</strong></div>
+          <button className="secondary-button small" onClick={importCsv}><RefreshCw size={15} /> Importar outro</button>
+        </section>
+      )}
+      <section className="summary-strip">
+        <div><span>Despesas no filtro (sem rascunhos)</span><strong>{money(total)}</strong></div>
+        <div><span>Lançamentos conciliados</span><strong>{entries.filter((entry) => entry.status === "Conciliado").length}</strong><small>de {entries.length} registros</small></div>
+        <div><span>Documentação pendente</span><strong className="warning-text">{entries.filter((entry) => entry.docs < entry.requiredDocs).length}</strong><small>itens para revisar</small></div>
+        <div><span>Período</span><strong>{start || "Início"} / {end || "Atual"}</strong><small>datas selecionadas</small></div>
+      </section>
+      <section className="panel">
+        <div className="toolbar">
+          <div className="search-field"><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar por fornecedor, ID ou rubrica" /></div>
+          <select value={status} onChange={(event) => setStatus(event.target.value)}><option>Todos</option><option>Conciliado</option><option>Pendente</option><option>Em análise</option></select>
+          <select aria-label="Filtrar rubrica" value={rubricFilter} onChange={e=>setRubricFilter(e.target.value)}><option>Todas as rubricas</option>{baseRubrics.map((rubric) => <option key={rubric.name}>{rubric.name}</option>)}</select>
+          <input aria-label="Data inicial" type="date" value={start} onChange={e=>setStart(e.target.value)}/><input aria-label="Data final" type="date" value={end} onChange={e=>setEnd(e.target.value)}/>
+          <a className="icon-button" aria-label="Exportar todos os lançamentos" href={"/api/reports/"+projectId}><Download size={17}/></a>
+        </div>
+        <ExpenseTable entries={filtered} onOpen={openEntry} />
+        {filtered.length === 0 && <div className="empty-state"><Search size={28} /><strong>Nenhum lançamento encontrado</strong><p>Altere os filtros ou registre uma nova despesa.</p><button className="primary-button" onClick={newEntry}><Plus size={17} /> Novo lançamento</button></div>}
+        <div className="table-pagination"><span>Exibindo {filtered.length} de {entries.length} lançamentos</span><div><button disabled><ChevronLeft size={16} /></button><button className="active">1</button><button disabled><ChevronRight size={16} /></button></div></div>
+      </section>
+    </>
+  );
+}
+
+function Resources({project,resources,onAdd}:{project:Project;resources:Resource[];onAdd:()=>void}) {
+  return <><section className="summary-strip"><div><span>Subvenção recebida</span><strong>{money(project.released)}</strong></div><div><span>Contrapartida financeira</span><strong>{money(project.counterpartRealized)}</strong></div><div><span>Rendimentos</span><strong>{money(project.income)}</strong></div></section><section className="panel"><div className="panel-header"><div><h2>Entradas de recursos</h2><p>Créditos efetivamente registrados no projeto.</p></div><button className="secondary-button" onClick={onAdd}>Registrar recurso</button></div><div className="table-wrap"><table className="data-table"><thead><tr><th>Data</th><th>Tipo</th><th>Parcela</th><th>Referência</th><th>Valor</th><th>Comprovante</th></tr></thead><tbody>{resources.map(r=><tr key={r.id}><td>{r.date}</td><td>{r.kind}</td><td>{r.installment||"—"}</td><td>{r.reference||"—"}</td><td>{money(r.value)}</td><td>{r.documents.map(d=><a key={d.id} href={"/api/documents/"+d.id}>{d.name}</a>)}</td></tr>)}</tbody></table></div>{!resources.length&&<div className="empty-state compact"><p>Nenhum recurso recebido foi registrado.</p></div>}</section></>;
+}
+
+function Reconciliation({project,entries,resources}:{project:Project;entries:Expense[];resources:Resource[]}) {
+  const [filter,setFilter]=useState("Todos");
+  const movements=[...resources.map(r=>({id:r.id,date:r.date,name:r.kind,reference:r.reference,value:r.value,kind:"Entrada",status:"Registrado"})),...entries.filter(e=>!e.draft).map(e=>({id:e.id,date:e.date,name:e.supplier,reference:e.description,value:-e.value,kind:"Saída",status:e.status}))].sort((a,b)=>b.date.localeCompare(a.date));
+  const balance=project.released+project.counterpartRealized+project.income-project.executed;
+  return <><section className="summary-strip"><div><span>Entradas registradas</span><strong>{money(project.released+project.counterpartRealized+project.income)}</strong></div><div><span>Despesas registradas</span><strong>{money(project.executed)}</strong></div><div><span>Saldo calculado</span><strong>{money(balance)}</strong></div></section><section className="panel"><div className="panel-header"><div><h2>Conferência financeira</h2><p>Compare os registros com o extrato bancário. A conferência de cada despesa é registrada ao abrir o lançamento.</p></div><select aria-label="Filtrar movimentações" value={filter} onChange={e=>setFilter(e.target.value)}>{["Todos","Entrada","Saída"].map(v=><option key={v}>{v}</option>)}</select></div><div className="table-wrap"><table className="data-table"><thead><tr><th>Data</th><th>Descrição</th><th>Tipo</th><th>Valor</th><th>Situação</th></tr></thead><tbody>{movements.filter(m=>filter==="Todos"||m.kind===filter).map(m=><tr key={m.id}><td>{m.date}</td><td><strong>{m.name}</strong><span>{m.reference}</span></td><td>{m.kind}</td><td>{money(m.value)}</td><td>{m.status}</td></tr>)}</tbody></table></div><p className="panel-note">O saldo é calculado a partir dos registros salvos. Não existe conexão automática com o banco.</p></section></>;
+}
+
+function Remaps({project,remaps,openModal,onApprove,admin}:{project:Project;remaps:Remap[];openModal:()=>void;onApprove:(r:Remap,authorization:string)=>void;admin:boolean}) {
+ const [authorization,setAuthorization]=useState<Record<string,string>>({});
+ return <><section className="summary-strip"><div><span>Subvenção aprovada</span><strong>{money(project.approved)}</strong></div><div><span>Remanejamentos aprovados</span><strong>{money(remaps.filter(r=>r.status==="Aprovado").reduce((s,r)=>s+r.value,0))}</strong></div></section><section className="panel"><div className="panel-header"><h2>Histórico de remanejamentos</h2><button className="primary-button" onClick={openModal}>Nova solicitação</button></div><div className="remap-list">{remaps.map(r=><article className="remap-card" key={r.id}><div className="remap-card-top"><StatusBadge status={r.status}/><strong>{money(r.value)}</strong></div><div className="remap-flow"><div><small>Origem</small><strong>{r.from}</strong></div><ArrowRight/><div><small>Destino</small><strong>{r.to}</strong></div></div><p>{r.reason}</p>{r.authorization&&<p>Autorização do concedente: {r.authorization}</p>}{admin&&r.status!=="Aprovado"&&<div className="form-grid"><label className="field full"><span>Referência da autorização do concedente</span><input value={authorization[r.id]||""} onChange={e=>setAuthorization({...authorization,[r.id]:e.target.value})}/></label><button className="secondary-button" disabled={!authorization[r.id]?.trim()} onClick={()=>onApprove(r,authorization[r.id])}>Registrar aprovação recebida</button></div>}</article>)}{!remaps.length&&<div className="empty-state compact"><p>Nenhuma solicitação registrada.</p></div>}</div></section></>;
+}
+
+function Documents({ entries, openEntry }: { entries: Expense[]; openEntry: (expense: Expense) => void }) {
+  const [filter, setFilter] = useState("Pendentes");
+  const visible = entries.filter((entry) => filter === "Todos" || (filter === "Pendentes" ? entry.docs < entry.requiredDocs : entry.docs === entry.requiredDocs));
+  const requiredDocuments = entries.reduce((sum, entry) => sum + entry.requiredDocs, 0);
+  const sentDocuments = entries.reduce((sum, entry) => sum + entry.docs, 0);
+  const completeness = percent(sentDocuments, requiredDocuments);
+  const invoicesSent = entries.filter((entry) => entry.documents?.some(d=>d.kind==="invoice")).length;
+  const paymentsSent = entries.filter((entry) => entry.documents?.some(d=>d.kind==="payment")).length;
+  const thirdPartyEntries = entries.filter((entry) => entry.rubric.includes("Terceiros"));
+  const quotationsRequired = thirdPartyEntries.length * 3;
+  const quotationsSent = thirdPartyEntries.reduce((sum, entry) => sum + (entry.documents?.filter(d=>d.kind.startsWith("quote")).length || 0), 0);
+  return (
+    <>
+      <section className="document-overview">
+        <article className="document-score">
+          <div className="score-ring"><strong>{completeness}%</strong><span>completo</span></div>
+          <div><span>Checklist documental</span><strong>{sentDocuments} de {requiredDocuments} documentos enviados</strong><p>{requiredDocuments === 0 ? "O checklist será criado com o primeiro lançamento." : `Faltam ${requiredDocuments - sentDocuments} arquivos para completar a prestação do período.`}</p></div>
+        </article>
+        <article><div className="document-stat-icon"><FileText size={20} /></div><span>Notas fiscais</span><strong>{invoicesSent}/{entries.length}</strong><ProgressBar value={percent(invoicesSent, entries.length)} /></article>
+        <article><div className="document-stat-icon amber"><Paperclip size={20} /></div><span>Comprovantes</span><strong>{paymentsSent}/{entries.length}</strong><ProgressBar value={percent(paymentsSent, entries.length)} tone="amber" /></article>
+        <article><div className="document-stat-icon blue"><ClipboardCheck size={20} /></div><span>Cotações</span><strong>{quotationsSent}/{quotationsRequired}</strong><ProgressBar value={percent(quotationsSent, quotationsRequired)} tone="blue" /></article>
+      </section>
+      <section className="panel">
+        <div className="panel-header"><div><h2>Checklist por lançamento</h2><p>Clique em um lançamento para visualizar e baixar os arquivos enviados.</p></div><div className="segmented-control">{["Pendentes", "Completos", "Todos"].map((item) => <button key={item} className={filter === item ? "active" : ""} onClick={() => setFilter(item)}>{item}</button>)}</div></div>
+        <div className="document-list">
+          {visible.map((entry) => (
+            <button className="document-row" key={entry.id} onClick={() => openEntry(entry)}>
+              <div className={"document-file-icon " + (entry.docs === entry.requiredDocs ? "complete" : "")}>{entry.docs === entry.requiredDocs ? <FileCheck2 size={20} /> : <FileText size={20} />}</div>
+              <div className="document-copy"><span>{entry.id} · {entry.rubric}</span><strong>{entry.supplier}</strong><small>{entry.description}</small></div>
+              <div className="document-checks">
+                <span className={entry.documents?.some(d=>d.kind==="invoice") ? "done" : "missing"}>Nota fiscal</span>
+                <span className={entry.documents?.some(d=>d.kind==="payment") ? "done" : ""}>{entry.documents?.some(d=>d.kind==="payment") ? <Check size={14} /> : <AlertCircle size={14} />} Pagamento</span>
+                {entry.rubric.includes("Terceiros") && <span className={entry.docs === entry.requiredDocs ? "done" : "missing"}>{entry.docs === entry.requiredDocs ? <Check size={14} /> : <AlertCircle size={14} />} 3 cotações</span>}
+              </div>
+              <div className="document-progress"><strong>{entry.docs}/{entry.requiredDocs}</strong><span>arquivos</span></div>
+              <ChevronRight size={18} />
+            </button>
+          ))}
+          {visible.length === 0 && <div className="empty-state compact"><FolderOpen size={28} /><strong>Nenhum documento neste filtro</strong><p>Os comprovantes aparecerão aqui conforme os lançamentos forem registrados.</p></div>}
+        </div>
+      </section>
+    </>
+  );
+}
+
+function ProjectLinksView({
+  project,
+  links,
+  onAdd,
+}: {
+  project: Project;
+  links: ProjectLink[];
+  onAdd: () => void;
+}) {
+  return (
+    <>
+      <section className="project-links-intro">
+        <div className="project-links-intro-icon"><Link2 size={23} /></div>
+        <div>
+          <span>Biblioteca de acessos</span>
+          <h2>Referências de {project.name}</h2>
+          <p>Guarde portais, pastas compartilhadas e páginas de consulta em um único lugar.</p>
+        </div>
+        <div className="project-links-count"><strong>{links.length}</strong><span>{links.length === 1 ? "link cadastrado" : "links cadastrados"}</span></div>
+      </section>
+
+      <section className="panel project-links-panel">
+        <div className="panel-header">
+          <div><h2>Links do projeto</h2><p>Os endereços abaixo ficam vinculados somente ao projeto selecionado.</p></div>
+        </div>
+        {links.length > 0 ? (
+          <div className="table-wrap">
+            <table className="data-table project-links-table">
+              <thead><tr><th>Nome</th><th>Endereço</th><th>Data de anexo</th><th aria-label="Ações" /></tr></thead>
+              <tbody>
+                {links.map((link) => (
+                  <tr key={link.id}>
+                    <td><div className="project-link-name"><span><Link2 size={17} /></span><strong>{link.name}</strong></div></td>
+                    <td><a className="project-link-url" href={link.url} target="_blank" rel="noreferrer" title={link.url}>{link.url.replace(/^https?:\/\//i, "").replace(/\/$/, "")}</a></td>
+                    <td><span className="project-link-date"><CalendarDays size={15} /> {link.addedAt}</span></td>
+                    <td><a className="secondary-button small project-link-open" href={link.url} target="_blank" rel="noreferrer" aria-label={`Abrir ${link.name}`}>Abrir link <ExternalLink size={14} /></a></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="empty-state compact"><Link2 size={29} /><strong>Nenhum link cadastrado</strong><p>Adicione o primeiro endereço importante deste projeto.</p><button className="primary-button small" onClick={onAdd}><Plus size={15} /> Adicionar link</button></div>
+        )}
+      </section>
+    </>
+  );
+}
+
+function TeamView({
+  project,
+  members,
+  onImport,
+  onAdd,
+  onEdit,
+  onDelete,
+}: {
+  project: Project;
+  members: TeamMember[];
+  onImport: () => void;
+  onAdd: () => void;
+  onEdit: (member: TeamMember) => void;
+  onDelete: (member: TeamMember) => void;
+}) {
+  const roles = new Set(members.map((member) => normalizeCsvText(member.role))).size;
+  const activities = members.filter((member) => member.activity.trim()).length;
+
+  return (
+    <>
+      <section className="management-summary-grid">
+        <article><span className="management-summary-icon"><Users size={20} /></span><div><span>Membros vinculados</span><strong>{members.length}</strong><small>neste projeto</small></div></article>
+        <article><span className="management-summary-icon amber"><IdCard size={20} /></span><div><span>Funções cadastradas</span><strong>{roles}</strong><small>responsabilidades definidas</small></div></article>
+        <article><span className="management-summary-icon blue"><ClipboardCheck size={20} /></span><div><span>Atividades descritas</span><strong>{activities}</strong><small>registros completos</small></div></article>
+      </section>
+
+      <section className="panel management-table-panel">
+        <div className="panel-header management-panel-header">
+          <div><h2>Equipe de {project.name}</h2><p>Os membros abaixo ficam vinculados somente ao projeto selecionado.</p></div>
+          <button className="secondary-button small" onClick={onImport}><FileSpreadsheet size={15} /> Importar outro CSV</button>
+        </div>
+        {members.length > 0 ? (
+          <div className="table-wrap">
+            <table className="data-table management-table team-table">
+              <thead><tr><th>Nome</th><th>Função</th><th>Atividade no projeto</th><th aria-label="Ações" /></tr></thead>
+              <tbody>
+                {members.map((member) => {
+                  const initials = member.name.split(/\s+/).slice(0, 2).map((part) => part[0]).join("").toUpperCase();
+                  return (
+                    <tr key={member.id}>
+                      <td><div className="member-name-cell"><span>{initials}</span><strong>{member.name}</strong></div></td>
+                      <td><span className="management-role-pill">{member.role}</span></td>
+                      <td><p className="management-activity">{member.activity}</p></td>
+                      <td><div className="team-row-actions"><button className="secondary-button small" onClick={() => onEdit(member)}><Pencil size={14} /> Editar</button><button className="delete-row-button" onClick={() => onDelete(member)} aria-label={`Excluir ${member.name}`}><Trash2 size={15} /> Excluir</button></div></td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="empty-state management-empty"><Users size={31} /><strong>Nenhum membro cadastrado</strong><p>Adicione um membro manualmente ou importe um CSV com nome, função e atividade.</p><div className="empty-state-actions"><button className="primary-button small" onClick={onAdd}><Plus size={15} /> Adicionar membro</button><button className="secondary-button small" onClick={onImport}><FileSpreadsheet size={15} /> Importar equipe</button></div></div>
+        )}
+      </section>
+    </>
+  );
+}
+
+function ScheduleView({
+  project,
+  items,
+  onImport,
+  onEdit,
+}: {
+  project: Project;
+  items: ScheduleItem[];
+  onImport: () => void;
+  onEdit: (item: ScheduleItem) => void;
+}) {
+  const [statusFilter, setStatusFilter] = useState<"Todas" | ScheduleStatus>("Todas");
+  const total = items.reduce((sum, item) => sum + item.value, 0);
+  const statusCounts: Record<ScheduleStatus, number> = {
+    "Não iniciada": items.filter((item) => item.status === "Não iniciada").length,
+    "Em andamento": items.filter((item) => item.status === "Em andamento").length,
+    "Concluída": items.filter((item) => item.status === "Concluída").length,
+    "Atrasada": items.filter((item) => item.status === "Atrasada").length,
+  };
+  const tasksToDo = items.length - statusCounts["Concluída"];
+  const completion = percent(statusCounts["Concluída"], items.length);
+  const statusPriority: Record<ScheduleStatus, number> = { "Atrasada": 0, "Em andamento": 1, "Não iniciada": 2, "Concluída": 3 };
+  const visibleItems = [...items]
+    .filter((item) => statusFilter === "Todas" || item.status === statusFilter)
+    .sort((left, right) => statusPriority[left.status] - statusPriority[right.status] || projectMonths.indexOf(left.month) - projectMonths.indexOf(right.month));
+  const filterOptions: Array<"Todas" | ScheduleStatus> = ["Todas", "Atrasada", "Em andamento", "Não iniciada", "Concluída"];
+
+  return (
+    <>
+      <section className="management-summary-grid schedule-management-summary">
+        <article><span className="management-summary-icon"><CalendarDays size={20} /></span><div><span>Itens planejados</span><strong>{items.length}</strong><small>etapas do projeto</small></div></article>
+        <article><span className="management-summary-icon amber"><Clock3 size={20} /></span><div><span>Tarefas a fazer</span><strong>{tasksToDo}</strong><small>{statusCounts["Atrasada"] > 0 ? `${statusCounts["Atrasada"]} em atraso` : "nenhuma em atraso"}</small></div></article>
+        <article className="schedule-progress-card"><span className="management-summary-icon blue"><Gauge size={20} /></span><div><span>Execução do cronograma</span><strong>{completion}%</strong><div className="schedule-mini-progress" aria-label={`${completion}% do cronograma concluído`}><span style={{ width: `${completion}%` }} /></div></div></article>
+        <article><span className="management-summary-icon"><CircleDollarSign size={20} /></span><div><span>Valor programado</span><strong className="management-money">{money(total)}</strong><small>soma do cronograma</small></div></article>
+      </section>
+
+      <section className="panel management-table-panel">
+        <div className="panel-header management-panel-header">
+          <div><h2>Cronograma de {project.name}</h2><p>Atividades, valores e meses previstos para a execução do projeto.</p></div>
+          <button className="secondary-button small" onClick={onImport}><FileSpreadsheet size={15} /> Importar outro CSV</button>
+        </div>
+        {items.length > 0 ? (
+          <>
+            <div className="schedule-smart-toolbar">
+              <div className="schedule-priority-note"><Gauge size={16} /><span><strong>Ordem inteligente</strong>Atrasadas e em andamento aparecem primeiro.</span></div>
+              <div className="schedule-status-filters" aria-label="Filtrar cronograma por status">
+                {filterOptions.map((filter) => {
+                  const count = filter === "Todas" ? items.length : statusCounts[filter];
+                  return <button key={filter} className={statusFilter === filter ? "active" : ""} onClick={() => setStatusFilter(filter)}>{filter}<b>{count}</b></button>;
+                })}
+              </div>
+            </div>
+            <div className="table-wrap">
+              <table className="data-table management-table schedule-table">
+                <thead><tr><th>Item</th><th>Atividade</th><th>Valor</th><th>Mês</th><th>Status</th><th aria-label="Ações" /></tr></thead>
+                <tbody>
+                  {visibleItems.map((item) => (
+                    <tr key={item.id} className={`schedule-row status-${normalizeCsvText(item.status).replace(/\s+/g, "-")}`}>
+                      <td><strong className="schedule-item-title">{item.item}</strong></td>
+                      <td><p className="management-activity schedule-activity">{item.activity}</p></td>
+                      <td><strong className="schedule-value">{money(item.value)}</strong></td>
+                      <td><span className="schedule-month"><CalendarDays size={14} /> {item.month}</span></td>
+                      <td><ScheduleStatusBadge status={item.status} /></td>
+                      <td><button className="secondary-button small edit-row-button" onClick={() => onEdit(item)}><Pencil size={14} /> Editar</button></td>
+                    </tr>
+                  ))}
+                  {visibleItems.length === 0 && <tr className="schedule-filter-empty"><td colSpan={6}><span>Nenhuma tarefa possui este status.</span><button onClick={() => setStatusFilter("Todas")}>Mostrar todas</button></td></tr>}
+                </tbody>
+                <tfoot><tr><td colSpan={2}>Total programado</td><td>{money(total)}</td><td colSpan={3}>{visibleItems.length} de {items.length} {items.length === 1 ? "item" : "itens"}</td></tr></tfoot>
+              </table>
+            </div>
+          </>
+        ) : (
+          <div className="empty-state management-empty"><CalendarDays size={31} /><strong>Nenhum item no cronograma</strong><p>Importe um CSV com item, atividade, valor e mês para preencher o planejamento.</p><button className="primary-button small" onClick={onImport}><FileSpreadsheet size={15} /> Importar cronograma</button></div>
+        )}
+      </section>
+    </>
+  );
+}
+
+function ScheduleStatusBadge({ status }: { status: ScheduleStatus }) {
+  const tone = status === "Concluída" ? "completed" : status === "Em andamento" ? "progress" : status === "Atrasada" ? "late" : "not-started";
+  return <span className={`schedule-status-badge ${tone}`}><span />{status}</span>;
+}
+
+function Reports({project,entries}:{project:Project;entries:Expense[]}) {
+ return <section className="panel"><div className="panel-header"><div><h2>Relatórios do projeto</h2><p>Dados atuais de {project.name}.</p></div></div><div className="modal-body"><p>{entries.length} lançamentos · {money(project.executed)} em despesas registradas.</p><a className="primary-button" href={"/api/reports/"+project.id}><Download size={18}/> Exportar lançamentos CSV</a><p>O arquivo inclui situação, rascunhos e completude documental. Os comprovantes originais ficam disponíveis na aba Documentos.</p><a className="secondary-button" href={"/api/reports/"+project.id+"?format=json"} target="_blank" rel="noreferrer">Consultar resumo financeiro</a></div></section>;
+}
+
+function normalizeCsvText(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase();
+}
+
+function normalizeCsvHeader(value: string) {
+  return normalizeCsvText(value).replace(/[^a-z0-9]/g, "");
+}
+
+function parseBrazilianNumber(value: string) {
+  const cleaned = value.replace(/R\$/gi, "").replace(/\s/g, "");
+  if (!cleaned) return Number.NaN;
+  if (cleaned.includes(",") && cleaned.includes(".")) {
+    return Number(cleaned.replace(/\./g, "").replace(",", "."));
+  }
+  if (cleaned.includes(",")) return Number(cleaned.replace(",", "."));
+  return Number(cleaned);
+}
+
+function parseBudgetCsv(text: string): { rows: CsvBudgetRow[]; error: string } {
+  const lines: string[][] = csvRecords(text);
+  if (lines.length < 2) return { rows: [], error: "O arquivo precisa ter um cabeçalho e pelo menos uma linha de dados." };
+
+  const headers = lines[0].map(normalizeCsvHeader);
+  const required = [
+    { key: "fonte", label: "fonte" },
+    { key: "elemento", label: "elemento" },
+    { key: "descricao", label: "descrição" },
+    { key: "unitario", label: "unitário" },
+    { key: "qtd", label: "qtd" },
+    { key: "valortotal", label: "valor total" },
+  ];
+  const missing = required.filter((column) => !headers.includes(column.key));
+  if (missing.length) {
+    return { rows: [], error: "Colunas ausentes: " + missing.map((column) => column.label).join(", ") + "." };
+  }
+
+  const indexOf = (key: string) => headers.indexOf(key);
+  const rows = lines.slice(1).map((line) => {
+    const cells = line;
+    const rawElement = cells[indexOf("elemento")] || "";
+    const knownRubric = baseRubrics.find((rubric) => normalizeCsvText(rubric.name) === normalizeCsvText(rawElement));
+    const row: CsvBudgetRow = {
+      fonte: cells[indexOf("fonte")] || "",
+      elemento: knownRubric?.name || rawElement,
+      descricao: cells[indexOf("descricao")] || "",
+      unitario: parseBrazilianNumber(cells[indexOf("unitario")] || ""),
+      qtd: parseBrazilianNumber(cells[indexOf("qtd")] || ""),
+      valorTotal: parseBrazilianNumber(cells[indexOf("valortotal")] || ""),
+      issues: [],
+    };
+    if (!row.fonte) row.issues.push("Fonte não informada");
+    if (!knownRubric) row.issues.push("Elemento não reconhecido");
+    if (!row.descricao) row.issues.push("Descrição não informada");
+    if (!Number.isFinite(row.unitario) || row.unitario <= 0) row.issues.push("Valor unitário inválido");
+    if (!Number.isFinite(row.qtd) || row.qtd <= 0) row.issues.push("Quantidade inválida");
+    if (!Number.isFinite(row.valorTotal) || row.valorTotal <= 0) row.issues.push("Valor total inválido");
+    return row;
+  });
+
+  return { rows, error: "" };
+}
+
+function parseProjectCsv(text: string, kind: "team"): { rows: CsvTeamRow[]; error: string };
+function parseProjectCsv(text: string, kind: "schedule"): { rows: CsvScheduleRow[]; error: string };
+function parseProjectCsv(text: string, kind: "team" | "schedule") {
+  const lines: string[][] = csvRecords(text);
+  if (lines.length < 2) return { rows: [], error: "O arquivo precisa ter um cabeçalho e pelo menos uma linha de dados." };
+
+  const headers = lines[0].map(normalizeCsvHeader);
+  const required = kind === "team"
+    ? [{ key: "nome", label: "nome" }, { key: "funcao", label: "função" }, { key: "atividade", label: "atividade" }]
+    : [{ key: "item", label: "item" }, { key: "atividade", label: "atividade" }, { key: "valor", label: "valor" }, { key: "mes", label: "mês" }];
+  const missing = required.filter((column) => !headers.includes(column.key));
+  if (missing.length) return { rows: [], error: "Colunas ausentes: " + missing.map((column) => column.label).join(", ") + "." };
+
+  const indexOf = (key: string) => headers.indexOf(key);
+  if (kind === "team") {
+    const rows: CsvTeamRow[] = lines.slice(1).map((line) => {
+      const cells = line;
+      const row: CsvTeamRow = {
+        nome: cells[indexOf("nome")] || "",
+        funcao: cells[indexOf("funcao")] || "",
+        atividade: cells[indexOf("atividade")] || "",
+        issues: [],
+      };
+      if (!row.nome) row.issues.push("Nome não informado");
+      if (!row.funcao) row.issues.push("Função não informada");
+      if (!row.atividade) row.issues.push("Atividade não informada");
+      return row;
+    });
+    return { rows, error: "" };
+  }
+
+  const rows: CsvScheduleRow[] = lines.slice(1).map((line) => {
+    const cells = line;
+    const rawMonth = cells[indexOf("mes")] || "";
+    const recognizedMonth = projectMonths.find((month) => normalizeCsvText(month) === normalizeCsvText(rawMonth));
+    const row: CsvScheduleRow = {
+      item: cells[indexOf("item")] || "",
+      atividade: cells[indexOf("atividade")] || "",
+      valor: parseBrazilianNumber(cells[indexOf("valor")] || ""),
+      mes: recognizedMonth || rawMonth,
+      issues: [],
+    };
+    if (!row.item) row.issues.push("Item não informado");
+    if (!row.atividade) row.issues.push("Atividade não informada");
+    if (!Number.isFinite(row.valor) || row.valor <= 0) row.issues.push("Valor inválido");
+    if (!row.mes) row.issues.push("Mês não informado");
+    else if (!recognizedMonth) row.issues.push("Informe um mês de janeiro a dezembro");
+    return row;
+  });
+  return { rows, error: "" };
+}
+
+const sampleTeamRows: CsvTeamRow[] = [
+  { nome: "Marina Alves", funcao: "Coordenadora do projeto", atividade: "Gestão técnica, acompanhamento das metas e articulação com a financiadora.", issues: [] },
+  { nome: "Rafael Moura", funcao: "Pesquisador de materiais", atividade: "Formulação, testes laboratoriais e validação dos protótipos.", issues: [] },
+  { nome: "Camila Nunes", funcao: "Analista financeira", atividade: "Controle das rubricas, documentos fiscais e prestação de contas.", issues: [] },
+];
+
+const sampleScheduleRows: CsvScheduleRow[] = [
+  { item: "Planejamento técnico do projeto", atividade: "Levantar os requisitos, definir as especificações técnicas e consolidar o plano de execução do projeto.", valor: 42000, mes: "Janeiro", issues: [] },
+  { item: "Aquisição de insumos", atividade: "Selecionar fornecedores, realizar as compras previstas e organizar os materiais necessários para os testes.", valor: 86500, mes: "Fevereiro", issues: [] },
+  { item: "Desenvolvimento da plataforma web", atividade: "Projetar, programar e testar os módulos da plataforma previstos no escopo aprovado.", valor: 148000, mes: "Março", issues: [] },
+];
+
+const sampleCsvRows: CsvBudgetRow[] = [
+  { fonte: "Subvenção", elemento: "Material de Consumo", descricao: "Resina biodegradável para protótipos", unitario: 85, qtd: 120, valorTotal: 10200, issues: [] },
+  { fonte: "Subvenção", elemento: "Material Permanente", descricao: "Extrusora de bancada", unitario: 45000, qtd: 1, valorTotal: 45000, issues: [] },
+  { fonte: "Subvenção", elemento: "Consultoria", descricao: "Modelagem de processo industrial", unitario: 8500, qtd: 2, valorTotal: 17000, issues: [] },
+  { fonte: "Subvenção", elemento: "Bolsa", descricao: "Bolsa de desenvolvimento tecnológico", unitario: 3200, qtd: 6, valorTotal: 19200, issues: [] },
+  { fonte: "Contrapartida", elemento: "Passagem", descricao: "Visitas técnicas aos fornecedores", unitario: 1800, qtd: 4, valorTotal: 7200, issues: [] },
+  { fonte: "Subvenção", elemento: "Serviços de Terceiros - PF", descricao: "Parecer técnico especializado", unitario: 6000, qtd: 1, valorTotal: 6000, issues: [] },
+];
+
+function TeamCsvImportModal({
+  project,
+  onClose,
+  onImport,
+}: {
+  project: Project;
+  onClose: () => void;
+  onImport: (rows: CsvTeamRow[]) => void;
+}) {
+  return <OperationalCsvImportModal kind="team" project={project} onClose={onClose} onImport={(rows) => onImport(rows as CsvTeamRow[])} />;
+}
+
+function ScheduleCsvImportModal({
+  project,
+  onClose,
+  onImport,
+}: {
+  project: Project;
+  onClose: () => void;
+  onImport: (rows: CsvScheduleRow[]) => void;
+}) {
+  return <OperationalCsvImportModal kind="schedule" project={project} onClose={onClose} onImport={(rows) => onImport(rows as CsvScheduleRow[])} />;
+}
+
+function OperationalCsvImportModal({
+  kind,
+  project,
+  onClose,
+  onImport,
+}: {
+  kind: "team" | "schedule";
+  project: Project;
+  onClose: () => void;
+  onImport: (rows: Array<CsvTeamRow | CsvScheduleRow>) => void;
+}) {
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [rows, setRows] = useState<Array<CsvTeamRow | CsvScheduleRow>>([]);
+  const [fileName, setFileName] = useState("");
+  const [error, setError] = useState("");
+  const [dragActive, setDragActive] = useState(false);
+  const isTeam = kind === "team";
+  const labels = isTeam
+    ? { eyebrow: "Equipe técnica", title: "Importar equipe por CSV", action: "Importar e preencher equipe" }
+    : { eyebrow: "Cronograma do projeto", title: "Importar cronograma por CSV", action: "Importar e preencher cronograma" };
+
+  const readFile = async (file?: File) => {
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) {
+      setRows([]);
+      setError("O arquivo ultrapassa o limite de 5 MB.");
+      return;
+    }
+    if (!file.name.toLowerCase().endsWith(".csv")) {
+      setRows([]);
+      setError("Selecione um arquivo no formato CSV.");
+      return;
+    }
+    try {
+      const text = await file.text();
+      const parsed = isTeam ? parseProjectCsv(text, "team") : parseProjectCsv(text, "schedule");
+      setRows(parsed.rows);
+      setFileName(file.name);
+      setError(parsed.error);
+    } catch {
+      setRows([]);
+      setError("Não foi possível ler o arquivo. Verifique a codificação e tente novamente.");
+    }
+  };
+
+  const useExample = () => {
+    setRows(isTeam ? sampleTeamRows : sampleScheduleRows);
+    setFileName(isTeam ? "modelo_equipe_tecnica.csv" : "modelo_cronograma.csv");
+    setError("");
+  };
+
+  const downloadTemplate = () => {
+    const content = isTeam
+      ? [
+          "nome;função;atividade",
+          "Marina Alves;Coordenadora do projeto;Gestão técnica e acompanhamento das metas",
+          "Rafael Moura;Pesquisador;Execução dos testes e validação dos resultados",
+        ].join("\n")
+      : [
+          "item;atividade;valor;mês",
+          "Planejamento técnico do projeto;Levantar os requisitos e consolidar as especificações técnicas;42.000,00;Janeiro",
+          "Desenvolvimento da plataforma web;Projetar programar e testar os módulos previstos no projeto;148.000,00;Março",
+        ].join("\n");
+    const url = URL.createObjectURL(new Blob(["\uFEFF" + content], { type: "text/csv;charset=utf-8" }));
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = isTeam ? "modelo_equipe_tecnica.csv" : "modelo_cronograma.csv";
+    anchor.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const issueCount = rows.reduce((sum, row) => sum + row.issues.length, 0);
+  const teamRows = rows as CsvTeamRow[];
+  const scheduleRows = rows as CsvScheduleRow[];
+  const roleCount = isTeam ? new Set(teamRows.map((row) => normalizeCsvText(row.funcao))).size : 0;
+  const scheduleTotal = !isTeam ? scheduleRows.reduce((sum, row) => sum + (Number.isFinite(row.valor) ? row.valor : 0), 0) : 0;
+  const columns = isTeam ? ["nome", "função", "atividade"] : ["item (nome da entrega)", "atividade (descrição completa)", "valor", "mês"];
+
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+      <div className="modal csv-modal operational-csv-modal" role="dialog" aria-modal="true" aria-labelledby={`${kind}-csv-title`}>
+        <input ref={fileInputRef} className="csv-hidden-input" type="file" accept=".csv,text/csv" onChange={(event) => readFile(event.target.files?.[0])} />
+        <div className="modal-header">
+          <div><span>{labels.eyebrow}</span><h2 id={`${kind}-csv-title`}>{labels.title}</h2></div>
+          <button className="icon-button" onClick={onClose} aria-label="Fechar"><X size={19} /></button>
+        </div>
+
+        {rows.length === 0 ? (
+          <div className="modal-body csv-modal-body">
+            <div className="csv-intro">
+              <div className="csv-intro-icon">{isTeam ? <Users size={24} /> : <CalendarDays size={24} />}</div>
+              <div><strong>{isTeam ? "Cadastre toda a equipe de uma só vez" : "Preencha o planejamento em poucos passos"}</strong><p>{isTeam ? "O sistema valida as colunas e mostra uma prévia antes de preencher a equipe do projeto." : "Use item para o nome da entrega, atividade para a descrição completa e mês para Janeiro, Fevereiro e assim por diante."}</p></div>
+            </div>
+            <button
+              className={`csv-dropzone ${dragActive ? "dragging" : ""}`}
+              onClick={() => fileInputRef.current?.click()}
+              onDragOver={(event) => { event.preventDefault(); setDragActive(true); }}
+              onDragLeave={() => setDragActive(false)}
+              onDrop={(event) => { event.preventDefault(); setDragActive(false); readFile(event.dataTransfer.files?.[0]); }}
+            >
+              <span><UploadCloud size={25} /></span>
+              <strong>Arraste o CSV para cá ou clique para selecionar</strong>
+              <small>Arquivo CSV de até 5 MB · separador vírgula ou ponto e vírgula</small>
+            </button>
+            {error && <div className="csv-error"><AlertCircle size={17} /><span><strong>Arquivo não reconhecido</strong>{error}</span></div>}
+            <div className="csv-schema operational-schema">
+              <div className="csv-schema-title"><span>Colunas obrigatórias</span><b>A ordem pode variar</b></div>
+              <div>{columns.map((column, index) => <span key={column}><b>{index + 1}</b> {column}</span>)}</div>
+            </div>
+            <button className="csv-example-button" onClick={useExample}>{isTeam ? <Users size={17} /> : <CalendarDays size={17} />}<span><strong>Ver com dados de exemplo</strong><small>Carrega uma prévia pronta para testar a importação</small></span><ArrowRight size={16} /></button>
+          </div>
+        ) : (
+          <div className="modal-body csv-preview-body">
+            <div className="csv-file-summary operational-file-summary">
+              <div className="csv-file-name"><span><FileSpreadsheet size={21} /></span><div><strong>{fileName}</strong><small>Vinculado a {project.code}</small></div></div>
+              <div><span>{isTeam ? "Membros" : "Itens"}</span><strong>{rows.length}</strong></div>
+              <div><span>{isTeam ? "Funções" : "Valor total"}</span><strong>{isTeam ? roleCount : money(scheduleTotal)}</strong></div>
+            </div>
+            {issueCount > 0 ? (
+              <div className="csv-error"><AlertCircle size={17} /><span><strong>{issueCount} inconsistências encontradas</strong>Corrija as linhas sinalizadas no arquivo e importe novamente.</span></div>
+            ) : (
+              <div className="csv-valid"><CheckCircle2 size={17} /><span><strong>Estrutura validada</strong>Todos os campos obrigatórios foram reconhecidos.</span></div>
+            )}
+            <div className="csv-preview-wrap">
+              {isTeam ? (
+                <table className="csv-preview-table operational-preview-table">
+                  <thead><tr><th>#</th><th>Nome</th><th>Função</th><th>Atividade</th><th /></tr></thead>
+                  <tbody>{teamRows.map((row, index) => <tr key={`${row.nome}-${index}`} className={row.issues.length ? "has-issue" : ""}><td>{index + 1}</td><td><strong>{row.nome || "—"}</strong></td><td>{row.funcao || "—"}</td><td><span className="csv-description">{row.atividade || "—"}</span></td><td>{row.issues.length ? <span className="csv-row-issue" title={row.issues.join(", ")}><AlertCircle size={15} /></span> : <CheckCircle2 className="csv-row-valid" size={15} />}</td></tr>)}</tbody>
+                </table>
+              ) : (
+                <table className="csv-preview-table operational-preview-table">
+                  <thead><tr><th>#</th><th>Item</th><th>Atividade</th><th>Valor</th><th>Mês</th><th /></tr></thead>
+                  <tbody>{scheduleRows.map((row, index) => <tr key={`${row.item}-${index}`} className={row.issues.length ? "has-issue" : ""}><td>{index + 1}</td><td><strong>{row.item || "—"}</strong></td><td><span className="csv-description">{row.atividade || "—"}</span></td><td><strong>{Number.isFinite(row.valor) ? money(row.valor) : "—"}</strong></td><td>{row.mes || "—"}</td><td>{row.issues.length ? <span className="csv-row-issue" title={row.issues.join(", ")}><AlertCircle size={15} /></span> : <CheckCircle2 className="csv-row-valid" size={15} />}</td></tr>)}</tbody>
+                </table>
+              )}
+            </div>
+            <p className="csv-preview-note"><ShieldCheck size={15} /> Ao confirmar, os itens serão adicionados a este projeto. Os registros existentes serão preservados. Depois, cada linha poderá ser editada.</p>
+          </div>
+        )}
+
+        <div className="modal-footer">
+          <button className="secondary-button" onClick={onClose}>Cancelar</button>
+          <div>
+            <button className="text-button csv-template-button" onClick={downloadTemplate}><Download size={15} /> Baixar modelo CSV</button>
+            {rows.length > 0 && <button className="secondary-button" onClick={() => fileInputRef.current?.click()}><RefreshCw size={15} /> Escolher outro</button>}
+            {rows.length > 0 && <button className="primary-button" disabled={issueCount > 0} onClick={() => onImport(rows)}><Check size={17} /> {labels.action}</button>}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TeamMemberCreateModal({
+  project,
+  onClose,
+  onSave,
+}: {
+  project: Project;
+  onClose: () => void;
+  onSave: (member: Pick<TeamMember, "name" | "role" | "activity">) => void;
+}) {
+  const [name, setName] = useState("");
+  const [role, setRole] = useState("");
+  const [activity, setActivity] = useState("");
+
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+      <form className="modal edit-management-modal" role="dialog" aria-modal="true" aria-labelledby="create-member-title" onSubmit={(event) => { event.preventDefault(); onSave({ name, role, activity }); }}>
+        <div className="modal-header"><div><span>Equipe de {project.code}</span><h2 id="create-member-title">Adicionar membro</h2></div><button type="button" className="icon-button" onClick={onClose} aria-label="Fechar"><X size={19} /></button></div>
+        <div className="modal-body form-grid management-edit-form">
+          <label className="field full"><span>Nome</span><input value={name} onChange={(event) => setName(event.target.value)} placeholder="Nome completo" required /></label>
+          <label className="field full"><span>Função</span><input value={role} onChange={(event) => setRole(event.target.value)} placeholder="Ex.: Desenvolvedora frontend" required /></label>
+          <label className="field full"><span>Atividade no projeto</span><textarea rows={4} value={activity} onChange={(event) => setActivity(event.target.value)} placeholder="Descreva as responsabilidades e atividades deste membro." required /></label>
+        </div>
+        <div className="modal-footer"><button type="button" className="secondary-button" onClick={onClose}>Cancelar</button><button type="submit" className="primary-button"><Plus size={17} /> Adicionar à equipe</button></div>
+      </form>
+    </div>
+  );
+}
+
+function DeleteTeamMemberModal({
+  member,
+  onClose,
+  onConfirm,
+}: {
+  member: TeamMember;
+  onClose: () => void;
+  onConfirm: (member: TeamMember) => void;
+}) {
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+      <div className="modal confirm-delete-modal" role="alertdialog" aria-modal="true" aria-labelledby="delete-member-title" aria-describedby="delete-member-description">
+        <div className="modal-header"><div><span>Equipe técnica</span><h2 id="delete-member-title">Excluir membro</h2></div><button className="icon-button" onClick={onClose} aria-label="Fechar"><X size={19} /></button></div>
+        <div className="modal-body confirm-delete-body"><span className="confirm-delete-icon"><Trash2 size={23} /></span><div><strong>Remover {member.name} da equipe?</strong><p id="delete-member-description">O membro e suas informações deixarão de aparecer neste projeto.</p></div></div>
+        <div className="modal-footer"><button className="secondary-button" onClick={onClose}>Cancelar</button><button className="danger-button" onClick={() => onConfirm(member)}><Trash2 size={16} /> Excluir membro</button></div>
+      </div>
+    </div>
+  );
+}
+
+function TeamMemberEditModal({
+  member,
+  onClose,
+  onSave,
+}: {
+  member: TeamMember;
+  onClose: () => void;
+  onSave: (member: TeamMember) => void;
+}) {
+  const [name, setName] = useState(member.name);
+  const [role, setRole] = useState(member.role);
+  const [activity, setActivity] = useState(member.activity);
+
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+      <form className="modal edit-management-modal" role="dialog" aria-modal="true" aria-labelledby="edit-member-title" onSubmit={(event) => { event.preventDefault(); onSave({ ...member, name: name.trim(), role: role.trim(), activity: activity.trim() }); }}>
+        <div className="modal-header"><div><span>Equipe técnica</span><h2 id="edit-member-title">Editar membro</h2></div><button type="button" className="icon-button" onClick={onClose} aria-label="Fechar"><X size={19} /></button></div>
+        <div className="modal-body form-grid management-edit-form">
+          <label className="field full"><span>Nome</span><input value={name} onChange={(event) => setName(event.target.value)} required /></label>
+          <label className="field full"><span>Função</span><input value={role} onChange={(event) => setRole(event.target.value)} required /></label>
+          <label className="field full"><span>Atividade no projeto</span><textarea rows={4} value={activity} onChange={(event) => setActivity(event.target.value)} required /></label>
+        </div>
+        <div className="modal-footer"><button type="button" className="secondary-button" onClick={onClose}>Cancelar</button><button type="submit" className="primary-button"><Check size={17} /> Salvar alterações</button></div>
+      </form>
+    </div>
+  );
+}
+
+function ScheduleItemEditModal({
+  item,
+  onClose,
+  onSave,
+}: {
+  item: ScheduleItem;
+  onClose: () => void;
+  onSave: (item: ScheduleItem) => void;
+}) {
+  const [itemTitle, setItemTitle] = useState(item.item);
+  const [activity, setActivity] = useState(item.activity);
+  const [value, setValue] = useState(String(item.value));
+  const [month, setMonth] = useState(item.month);
+  const [status, setStatus] = useState<ScheduleStatus>(item.status);
+
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+      <form className="modal edit-management-modal" role="dialog" aria-modal="true" aria-labelledby="edit-schedule-title" onSubmit={(event) => { event.preventDefault(); onSave({ ...item, item: itemTitle.trim(), activity: activity.trim(), value: Number(value), month, status }); }}>
+        <div className="modal-header"><div><span>Cronograma do projeto</span><h2 id="edit-schedule-title">Editar item</h2></div><button type="button" className="icon-button" onClick={onClose} aria-label="Fechar"><X size={19} /></button></div>
+        <div className="modal-body form-grid management-edit-form">
+          <label className="field full"><span>Item do cronograma</span><input value={itemTitle} onChange={(event) => setItemTitle(event.target.value)} placeholder="Ex.: Desenvolvimento da plataforma web" required /><small>Informe o nome da entrega ou etapa principal.</small></label>
+          <label className="field full"><span>Descrição completa da atividade</span><textarea rows={4} value={activity} onChange={(event) => setActivity(event.target.value)} placeholder="Descreva o que será executado nesta etapa." required /></label>
+          <label className="field"><span>Mês</span><select value={month} onChange={(event) => setMonth(event.target.value)} required>{projectMonths.map((projectMonth) => <option key={projectMonth} value={projectMonth}>{projectMonth}</option>)}</select></label>
+          <label className="field"><span>Status</span><select value={status} onChange={(event) => setStatus(event.target.value as ScheduleStatus)} required>{scheduleStatuses.map((scheduleStatus) => <option key={scheduleStatus} value={scheduleStatus}>{scheduleStatus}</option>)}</select></label>
+          <label className="field full"><span>Valor</span><input type="number" min="0.01" step="0.01" value={value} onChange={(event) => setValue(event.target.value)} required /></label>
+        </div>
+        <div className="modal-footer"><button type="button" className="secondary-button" onClick={onClose}>Cancelar</button><button type="submit" className="primary-button"><Check size={17} /> Salvar alterações</button></div>
+      </form>
+    </div>
+  );
+}
+
+function CsvImportModal({
+  onClose,
+  onImport,
+}: {
+  onClose: () => void;
+  onImport: (rows: CsvBudgetRow[], fileName: string) => void;
+}) {
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [rows, setRows] = useState<CsvBudgetRow[]>([]);
+  const [fileName, setFileName] = useState("");
+  const [error, setError] = useState("");
+  const [dragActive, setDragActive] = useState(false);
+
+  const readFile = async (file?: File) => {
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) {
+      setRows([]);
+      setError("O arquivo ultrapassa o limite de 5 MB.");
+      return;
+    }
+    if (!file.name.toLowerCase().endsWith(".csv")) {
+      setRows([]);
+      setError("Selecione um arquivo no formato CSV.");
+      return;
+    }
+    try {
+      const parsed = parseBudgetCsv(await file.text());
+      setRows(parsed.rows);
+      setFileName(file.name);
+      setError(parsed.error);
+    } catch {
+      setRows([]);
+      setError("Não foi possível ler o arquivo. Verifique a codificação e tente novamente.");
+    }
+  };
+
+  const useExample = () => {
+    setRows(sampleCsvRows);
+    setFileName("modelo_rubricas.csv");
+    setError("");
+  };
+
+  const downloadTemplate = () => {
+    const content = [
+      "fonte;elemento;descrição;unitário;qtd;valor total",
+      "Subvenção;Material de Consumo;Resina biodegradável;85,00;120;10.200,00",
+      "Contrapartida;Consultoria;Modelagem de processo;8.500,00;2;17.000,00",
+    ].join("\n");
+    const url = URL.createObjectURL(new Blob(["\uFEFF" + content], { type: "text/csv;charset=utf-8" }));
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = "modelo_importacao_rubricas.csv";
+    anchor.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const total = rows.reduce((sum, row) => sum + (Number.isFinite(row.valorTotal) ? row.valorTotal : 0), 0);
+  const elements = new Set(rows.map((row) => row.elemento).filter(Boolean)).size;
+  const issueCount = rows.reduce((sum, row) => sum + row.issues.length, 0);
+
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+      <div className="modal csv-modal" role="dialog" aria-modal="true" aria-labelledby="csv-modal-title">
+        <input
+          ref={fileInputRef}
+          className="csv-hidden-input"
+          type="file"
+          accept=".csv,text/csv"
+          onChange={(event) => readFile(event.target.files?.[0])}
+        />
+        <div className="modal-header">
+          <div><span>Cadastro de rubricas</span><h2 id="csv-modal-title">Importar arquivo CSV</h2></div>
+          <button className="icon-button" onClick={onClose} aria-label="Fechar"><X size={19} /></button>
+        </div>
+
+        {rows.length === 0 ? (
+          <div className="modal-body csv-modal-body">
+            <div className="csv-intro">
+              <div className="csv-intro-icon"><FileSpreadsheet size={24} /></div>
+              <div><strong>Preencha várias rubricas de uma só vez</strong><p>O sistema confere a estrutura, reconhece os elementos e calcula o resumo antes da importação.</p></div>
+            </div>
+            <button
+              className={"csv-dropzone " + (dragActive ? "dragging" : "")}
+              onClick={() => fileInputRef.current?.click()}
+              onDragOver={(event) => { event.preventDefault(); setDragActive(true); }}
+              onDragLeave={() => setDragActive(false)}
+              onDrop={(event) => {
+                event.preventDefault();
+                setDragActive(false);
+                readFile(event.dataTransfer.files?.[0]);
+              }}
+            >
+              <span><UploadCloud size={25} /></span>
+              <strong>Arraste o CSV para cá ou clique para selecionar</strong>
+              <small>Arquivo CSV de até 5 MB · separador vírgula ou ponto e vírgula</small>
+            </button>
+            {error && <div className="csv-error"><AlertCircle size={17} /><span><strong>Arquivo não reconhecido</strong>{error}</span></div>}
+            <div className="csv-schema">
+              <div className="csv-schema-title"><span>Colunas obrigatórias</span><b>A ordem pode variar</b></div>
+              <div>
+                <span><b>1</b> fonte</span>
+                <span><b>2</b> elemento</span>
+                <span><b>3</b> descrição</span>
+                <span><b>4</b> unitário</span>
+                <span><b>5</b> qtd</span>
+                <span><b>6</b> valor total</span>
+              </div>
+            </div>
+            <button className="csv-example-button" onClick={useExample}><FileSpreadsheet size={17} /><span><strong>Ver com dados de exemplo</strong><small>Carrega 6 itens para demonstrar a importação</small></span><ArrowRight size={16} /></button>
+          </div>
+        ) : (
+          <div className="modal-body csv-preview-body">
+            <div className="csv-file-summary">
+              <div className="csv-file-name"><span><FileSpreadsheet size={21} /></span><div><strong>{fileName}</strong><small>Arquivo lido e estruturado automaticamente</small></div></div>
+              <div><span>Itens</span><strong>{rows.length}</strong></div>
+              <div><span>Rubricas</span><strong>{elements}</strong></div>
+              <div><span>Valor total</span><strong>{money(total)}</strong></div>
+            </div>
+            {issueCount > 0 ? (
+              <div className="csv-error"><AlertCircle size={17} /><span><strong>{issueCount} inconsistências encontradas</strong>Corrija as linhas sinalizadas no arquivo e importe novamente.</span></div>
+            ) : (
+              <div className="csv-valid"><CheckCircle2 size={17} /><span><strong>Estrutura validada</strong>Todas as colunas e valores obrigatórios foram reconhecidos.</span></div>
+            )}
+            <div className="csv-preview-wrap">
+              <table className="csv-preview-table">
+                <thead><tr><th>#</th><th>Fonte</th><th>Elemento</th><th>Descrição</th><th>Unitário</th><th>Qtd</th><th>Valor total</th><th /></tr></thead>
+                <tbody>
+                  {rows.map((row, index) => (
+                    <tr key={String(index) + row.descricao} className={row.issues.length ? "has-issue" : ""}>
+                      <td>{index + 1}</td>
+                      <td><span className={"source-pill " + (normalizeCsvText(row.fonte).includes("contrapartida") ? "counterpart" : "")}>{row.fonte}</span></td>
+                      <td><strong>{row.elemento || "—"}</strong></td>
+                      <td><span className="csv-description">{row.descricao || "—"}</span></td>
+                      <td>{Number.isFinite(row.unitario) ? money(row.unitario) : "—"}</td>
+                      <td>{Number.isFinite(row.qtd) ? row.qtd : "—"}</td>
+                      <td><strong>{Number.isFinite(row.valorTotal) ? money(row.valorTotal) : "—"}</strong></td>
+                      <td>{row.issues.length ? <span className="csv-row-issue" title={row.issues.join(", ")}><AlertCircle size={15} /></span> : <CheckCircle2 className="csv-row-valid" size={15} />}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p className="csv-preview-note"><ShieldCheck size={15} /> Esta importação substituirá todo o orçamento deste projeto. Valores abaixo do que já foi executado ou remanejado serão recusados.</p>
+          </div>
+        )}
+
+        <div className="modal-footer">
+          <button className="secondary-button" onClick={onClose}>Cancelar</button>
+          <div>
+            <button className="text-button csv-template-button" onClick={downloadTemplate}><Download size={15} /> Baixar modelo CSV</button>
+            {rows.length > 0 && <button className="secondary-button" onClick={() => fileInputRef.current?.click()}><RefreshCw size={15} /> Escolher outro</button>}
+            {rows.length > 0 && <button className="primary-button" disabled={issueCount > 0} onClick={() => onImport(rows, fileName)}><Check size={17} /> Importar e preencher</button>}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ResourceEntryModal({
+  project,
+  onClose,
+  onSave,
+}: {
+  project: Project;
+  onClose: () => void;
+  onSave: (entry: ResourceEntryDraft) => void;
+}) {
+  const installmentCount = project.installments || 5;
+  const parcelValue = project.approved / installmentCount;
+  const receivedInstallments = project.receivedInstallments?.length || 0;
+  const [kind, setKind] = useState<ResourceEntryKind>("Parcela da subvenção");
+  const [value, setValue] = useState(String(parcelValue));
+  const [date, setDate] = useState(new Date().toLocaleDateString("en-CA"));
+  const [installment, setInstallment] = useState(String(Array.from({length:installmentCount},(_,i)=>i+1).find(n=>!project.receivedInstallments?.includes(n)) || 1));
+  const [reference, setReference] = useState("");
+  const [proof, setProof] = useState<File>();
+  const [notes, setNotes] = useState("");
+
+  const numericValue = Number(value);
+  const available = kind === "Parcela da subvenção"
+    ? Math.max(0, project.approved - project.released)
+    : kind === "Contrapartida financeira"
+      ? Math.max(0, project.counterpart - project.counterpartRealized)
+      : Number.POSITIVE_INFINITY;
+  const valid = Boolean(date && numericValue > 0 && numericValue <= available && (kind !== "Parcela da subvenção" || Number(installment) > 0));
+  const source = kind === "Parcela da subvenção"
+    ? `${project.agency} · ${project.code}`
+    : kind === "Contrapartida financeira"
+      ? "Recursos próprios da beneficiária"
+      : "Aplicação financeira da conta vinculada";
+  const currentBankBalance = project.released + project.counterpartRealized + project.income - project.executed;
+  const projectedValue = kind === "Contrapartida financeira"
+    ? project.counterpartRealized + (Number.isFinite(numericValue) ? numericValue : 0)
+    : currentBankBalance + (Number.isFinite(numericValue) ? numericValue : 0);
+
+  const chooseKind = (nextKind: ResourceEntryKind) => {
+    setKind(nextKind);
+    setValue(nextKind === "Parcela da subvenção" ? String(parcelValue) : "");
+  };
+
+  const submit = () => {
+    if (!valid) return;
+    onSave({ kind, value: numericValue, date, installment: kind === "Parcela da subvenção" ? Number(installment) : undefined, reference, proof, notes });
+  };
+
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+      <div className="modal large resource-entry-modal" role="dialog" aria-modal="true" aria-labelledby="resource-entry-title">
+        <div className="modal-header"><div><span>Entrada de recursos</span><h2 id="resource-entry-title">Lançar recurso financeiro</h2></div><button className="icon-button" onClick={onClose} aria-label="Fechar"><X size={19} /></button></div>
+        <div className="modal-body">
+          <div className="resource-kind-picker" role="group" aria-label="Tipo de recurso financeiro">
+            <button type="button" className={kind === "Parcela da subvenção" ? "active" : ""} onClick={() => chooseKind("Parcela da subvenção")}><span><ArrowDownToLine size={19} /></span><strong>Parcela da subvenção</strong><small>Crédito do órgão concedente</small></button>
+            <button type="button" className={kind === "Contrapartida financeira" ? "active" : ""} onClick={() => chooseKind("Contrapartida financeira")}><span><HandCoins size={19} /></span><strong>Contrapartida financeira</strong><small>Aporte próprio da empresa</small></button>
+            <button type="button" className={kind === "Rendimento de aplicação" ? "active" : ""} onClick={() => chooseKind("Rendimento de aplicação")}><span><Banknote size={19} /></span><strong>Rendimento de aplicação</strong><small>Crédito da conta vinculada</small></button>
+          </div>
+
+          <div className="form-grid resource-entry-form">
+            {kind === "Parcela da subvenção" && <label className="field"><span>Parcela recebida *</span><select value={installment} onChange={(event) => setInstallment(event.target.value)}>{Array.from({ length: installmentCount }, (_, index) => index + 1).map((number) => <option key={number} value={number} disabled={project.receivedInstallments?.includes(number)}>{number}ª parcela</option>)}</select></label>}
+            <label className="field"><span>Data do crédito *</span><input type="date" value={date} onChange={(event) => setDate(event.target.value)} /></label>
+            <label className="field money-field"><span>Valor recebido *</span><div><b>R$</b><input aria-label="Valor recebido" type="number" min="0" step="0.01" value={value} onChange={(event) => setValue(event.target.value)} placeholder="0,00" /></div><small>{Number.isFinite(available) ? `Disponível para lançamento: ${money(available)}` : "Informe o valor creditado no extrato."}</small></label>
+            <label className="field"><span>Fonte do recurso</span><input value={source} readOnly /></label>
+            <label className="field full"><span>Identificador bancário</span><input value={reference} onChange={(event) => setReference(event.target.value)} placeholder="Ex.: PIX, TED, documento ou referência do extrato" /></label>
+            <label className="upload-inline full"><input type="file" accept=".pdf,.jpg,.jpeg,.png" onChange={(event) => setProof(event.target.files?.[0])} /><Paperclip size={19} /><span><strong>Comprovante do crédito / extrato</strong><small>{proof?.name || "Clique para anexar um arquivo comprobatório"}</small></span>{proof && <CheckCircle2 size={18} />}</label>
+            <label className="field full"><span>Observações</span><textarea rows={3} value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Inclua informações que facilitem a conferência deste recurso." /></label>
+          </div>
+
+          {numericValue > available && <div className="resource-entry-warning"><AlertCircle size={17} /><span>O valor informado ultrapassa o saldo previsto para este tipo de recurso.</span></div>}
+          <div className="resource-entry-impact"><span><Landmark size={19} /></span><div><strong>Impacto do lançamento</strong><p>{kind === "Contrapartida financeira" ? "Atualiza a contrapartida realizada do projeto." : "Atualiza os recursos disponíveis e o saldo financeiro do projeto."}</p></div><b>{kind === "Contrapartida financeira" ? "Contrapartida após o aporte" : "Saldo após o crédito"}<strong>{money(projectedValue)}</strong></b></div>
+        </div>
+        <div className="modal-footer"><button className="secondary-button" onClick={onClose}>Cancelar</button><button className="primary-button" disabled={!valid} onClick={submit}><Check size={17} /> Registrar recurso financeiro</button></div>
+      </div>
+    </div>
+  );
+}
+
+function ProjectLinkModal({
+  project,
+  onClose,
+  onSave,
+}: {
+  project: Project;
+  onClose: () => void;
+  onSave: (draft: { name: string; url: string }) => void;
+}) {
+  const [name, setName] = useState("");
+  const [url, setUrl] = useState("");
+  const normalizedPreview = url.trim() && !/^https?:\/\//i.test(url.trim()) ? `https://${url.trim()}` : url.trim();
+  const valid = Boolean(name.trim() && url.trim() && normalizedPreview.includes("."));
+
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+      <div className="modal project-link-modal" role="dialog" aria-modal="true" aria-labelledby="project-link-modal-title">
+        <div className="modal-header"><div><span>Referência do projeto</span><h2 id="project-link-modal-title">Adicionar link importante</h2></div><button className="icon-button" onClick={onClose} aria-label="Fechar"><X size={19} /></button></div>
+        <div className="modal-body">
+          <div className="project-link-project-note"><span><Link2 size={18} /></span><div><small>Projeto selecionado</small><strong>{project.name}</strong></div></div>
+          <div className="form-grid project-link-form">
+            <label className="field full"><span>Nome do link *</span><input autoFocus value={name} onChange={(event) => setName(event.target.value)} placeholder="Ex.: Pasta de documentos no Drive" /></label>
+            <label className="field full"><span>Endereço (URL) *</span><input type="url" value={url} onChange={(event) => setUrl(event.target.value)} placeholder="https://exemplo.com.br/pasta" /><small>Você pode colar o endereço com ou sem https://</small></label>
+          </div>
+          <div className="project-link-privacy"><ShieldCheck size={16} /><span>Este link ficará organizado somente no projeto selecionado.</span></div>
+        </div>
+        <div className="modal-footer"><button className="secondary-button" onClick={onClose}>Cancelar</button><button className="primary-button" disabled={!valid} onClick={() => onSave({ name, url })}><Plus size={17} /> Adicionar link</button></div>
+      </div>
+    </div>
+  );
+}
+
+type ExpenseDraft = Pick<Expense,"supplier"|"description"|"rubric"|"value"|"date"|"taxId"|"notes">;
+function NewEntryModal({
+  onClose,
+  onSave,
+  onImportCsv,
+  showToast,
+}: {
+  onClose: () => void;
+  onSave: (entry: ExpenseDraft, draft: boolean, files: Record<string,File>) => void;
+  onImportCsv: () => void;
+  showToast: (message: string) => void;
+}) {
+  const [step, setStep] = useState(1);
+  const [rubric, setRubric] = useState("Material de Consumo");
+  const [supplier, setSupplier] = useState("");
+  const [description, setDescription] = useState("");
+  const [value, setValue] = useState("");
+  const [files, setFiles] = useState<Record<string, File>>({});
+  const [date,setDate]=useState(new Date().toLocaleDateString("en-CA")),[taxId,setTaxId]=useState(""),[notes,setNotes]=useState("");
+  const isThirdParty = rubric.includes("Terceiros");
+  const requiredKeys = isThirdParty ? ["quote1", "quote2", "quote3", "invoice", "payment"] : ["invoice", "payment"];
+  const complete = requiredKeys.every((key) => Boolean(files[key]));
+  const firstStepComplete = Boolean(supplier && description && Number(value) > 0);
+
+  const setFile = (key: string, file?: File) => {
+    if (file) setFiles((current) => ({ ...current, [key]: file }));
+  };
+  const save = (draft: boolean) => {
+    if (!supplier || !description || !value) {
+      showToast("Preencha os dados básicos antes de salvar.");
+      return;
+    }
+    onSave({ supplier, description, rubric, value: Number(value),date,taxId,notes }, draft, Object.fromEntries(Object.entries(files).filter(([key])=>requiredKeys.includes(key))));
+  };
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+      <div className="modal large" role="dialog" aria-modal="true" aria-labelledby="entry-modal-title">
+        <div className="modal-header"><div><span>Novo lançamento</span><h2 id="entry-modal-title">{step === 1 ? "Dados da despesa" : "Documentos comprobatórios"}</h2></div><button className="icon-button" onClick={onClose} aria-label="Fechar"><X size={19} /></button></div>
+        <div className="stepper">
+          <div className="active"><span>{step > 1 ? <Check size={14} /> : 1}</span><div><strong>Dados da despesa</strong><small>Identificação e valor</small></div></div>
+          <i /><div className={step === 2 ? "active" : ""}><span>2</span><div><strong>Documentos</strong><small>Comprovação obrigatória</small></div></div>
+        </div>
+        {step === 1 ? (
+          <div className="modal-body form-grid">
+            <button type="button" className="csv-entry-shortcut full" onClick={onImportCsv}>
+              <span className="csv-entry-shortcut-icon"><FileSpreadsheet size={20} /></span>
+              <span><strong>Preencher várias rubricas por CSV</strong><small>Importe fonte, elemento, descrição, unitário, quantidade e valor total.</small></span>
+              <span className="csv-entry-shortcut-action">Importar arquivo <ArrowRight size={15} /></span>
+            </button>
+            <label className="field full"><span>Rubrica *</span><select value={rubric} onChange={(event) => setRubric(event.target.value)}>{baseRubrics.map((item) => <option key={item.name}>{item.name}</option>)}</select><small>O saldo da rubrica será validado ao registrar a despesa.</small></label>
+            <label className="field"><span>Fornecedor / favorecido *</span><input value={supplier} onChange={(event) => setSupplier(event.target.value)} placeholder="Nome ou razão social" /></label>
+            <label className="field"><span>CPF / CNPJ</span><input value={taxId} onChange={e=>setTaxId(e.target.value)} placeholder="00.000.000/0000-00" /></label>
+            <label className="field full"><span>Descrição da despesa *</span><input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Informe o objeto da contratação ou aquisição" /></label>
+            <label className="field"><span>Data do documento *</span><input type="date" value={date} onChange={e=>setDate(e.target.value)} /></label>
+            <label className="field money-field"><span>Valor *</span><div><b>R$</b><input value={value} onChange={(event) => setValue(event.target.value)} type="number" min="0" step="0.01" placeholder="0,00" /></div></label>
+            <label className="field full"><span>Observações</span><textarea value={notes} onChange={e=>setNotes(e.target.value)} placeholder="Inclua informações que facilitem a análise deste lançamento." rows={3} /></label>
+          </div>
+        ) : (
+          <div className="modal-body">
+            {isThirdParty && <div className="document-requirement"><AlertCircle size={18} /><div><strong>Três cotações são obrigatórias para esta rubrica</strong><span>Anexe as propostas utilizadas na justificativa de seleção do fornecedor.</span></div></div>}
+            {isThirdParty && (
+              <div className="upload-section">
+                <div className="upload-section-title"><span>Pesquisa de preços</span><b>3 arquivos obrigatórios</b></div>
+                <div className="upload-grid">{["quote1", "quote2", "quote3"].map((key, index) => <UploadBox key={key} label={"Cotação " + String(index + 1)} file={files[key]?.name} onFile={(file) => setFile(key, file)} />)}</div>
+              </div>
+            )}
+            <div className="upload-section">
+              <div className="upload-section-title"><span>Comprovação da despesa</span><b>Obrigatório</b></div>
+              <div className="upload-grid two"><UploadBox label="Nota fiscal / recibo" file={files.invoice?.name} onFile={(file) => setFile("invoice", file)} /><UploadBox label="Comprovante de pagamento" file={files.payment?.name} onFile={(file) => setFile("payment", file)} /></div>
+            </div>
+            <div className="document-tip"><ShieldCheck size={18} /><span>Formatos aceitos: PDF, JPG ou PNG · tamanho máximo de 10 MB por arquivo.</span></div>
+          </div>
+        )}
+        <div className="modal-footer">
+          <button className="secondary-button" onClick={() => step === 1 ? onClose() : setStep(1)}>{step === 1 ? "Cancelar" : "Voltar"}</button>
+          <div>
+            <button className="text-button draft-button" onClick={() => save(true)}>Salvar rascunho</button>
+            {step === 1 ? <button className="primary-button" disabled={!firstStepComplete} onClick={() => setStep(2)}>Continuar <ArrowRight size={17} /></button> : <button className="primary-button" disabled={!complete} onClick={() => save(false)}><Check size={17} /> Registrar despesa</button>}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function UploadBox({ label, file, onFile }: { label: string; file?: string; onFile: (file?: File) => void }) {
+  return (
+    <label className={"upload-box " + (file ? "has-file" : "")}>
+      <input type="file" accept=".pdf,.jpg,.jpeg,.png" onChange={(event) => onFile(event.target.files?.[0])} />
+      <span className="upload-box-icon">{file ? <FileCheck2 size={21} /> : <UploadCloud size={21} />}</span>
+      <strong>{label}</strong><small>{file || "Clique para selecionar o arquivo"}</small>
+      {file && <b><Check size={13} /> anexado</b>}
+    </label>
+  );
+}
+
+function RemapModal({onClose,onSave}:{onClose:()=>void;onSave:(draft:{from:string;to:string;value:number;reason:string})=>void}) {
+ const [from,setFrom]=useState("Material Permanente"),[to,setTo]=useState("Consultoria"),[value,setValue]=useState(""),[reason,setReason]=useState("");
+ return <div className="modal-backdrop"><form className="modal" role="dialog" aria-modal="true" aria-label="Solicitar remanejamento" onSubmit={e=>{e.preventDefault();onSave({from,to,value:Number(value),reason});}}><div className="modal-header"><h2>Solicitar remanejamento</h2><button type="button" className="secondary-button" onClick={onClose}>Fechar</button></div><div className="modal-body form-grid"><label className="field"><span>Origem</span><select value={from} onChange={e=>setFrom(e.target.value)}>{baseRubrics.map(r=><option key={r.name}>{r.name}</option>)}</select></label><label className="field"><span>Destino</span><select value={to} onChange={e=>setTo(e.target.value)}>{baseRubrics.map(r=><option key={r.name}>{r.name}</option>)}</select></label><label className="field full"><span>Valor</span><input type="number" min="0.01" step="0.01" required value={value} onChange={e=>setValue(e.target.value)}/></label><label className="field full"><span>Justificativa</span><textarea required value={reason} onChange={e=>setReason(e.target.value)}/></label><p className="full">Após obter a autorização do concedente, um administrador poderá registrar a aprovação.</p></div><div className="modal-footer"><button type="button" className="secondary-button" onClick={onClose}>Cancelar</button><button className="primary-button" disabled={from===to}>Salvar solicitação</button></div></form></div>;
+}
+
+function ExpenseModal({expense,onClose,onUpload,onUpdate,admin}:{expense:Expense;onClose:()=>void;onUpload:(e:Expense,files:Record<string,File>)=>void;onUpdate:(e:Expense,action:string,reference?:string)=>void;admin:boolean}) {
+ const [files,setFiles]=useState<Record<string,File>>({}),[reference,setReference]=useState("");
+ const keys=expense.rubric.includes("Terceiros")?["invoice","payment","quote1","quote2","quote3"]:["invoice","payment"];
+ const labels:Record<string,string>={invoice:"Nota fiscal / recibo",payment:"Comprovante de pagamento",quote1:"Cotação 1",quote2:"Cotação 2",quote3:"Cotação 3"};
+ const pending=Object.fromEntries(Object.entries(files).filter(([kind])=>!expense.documents?.some(d=>d.kind===kind)));
+ return <div className="modal-backdrop"><section className="modal expense-modal" role="dialog" aria-modal="true" aria-label="Detalhes da despesa"><div className="modal-header"><div><span>{expense.date}</span><h2>{expense.supplier}</h2></div><button className="secondary-button" onClick={onClose}>Fechar</button></div><div className="expense-detail-hero"><strong>{money(expense.value)}</strong><StatusBadge status={expense.status}/></div><div className="modal-body"><p>{expense.description}</p><p>{expense.rubric}</p>{expense.notes&&<p>{expense.notes}</p>}<h3>Documentos comprobatórios</h3><div className="file-checklist">{keys.map(kind=>{const doc=expense.documents?.find(d=>d.kind===kind);return doc?<a className="complete file-document-download" key={kind} href={"/api/documents/"+doc.id}><FileCheck2 size={18}/><span><strong>{labels[kind]}</strong><small>{doc.name}</small></span><Download size={18}/></a>:<UploadBox key={kind} label={labels[kind]} file={files[kind]?.name} onFile={file=>{if(file)setFiles({...files,[kind]:file});}}/>;})}</div>{Object.keys(pending).length>0&&<button className="secondary-button" onClick={()=>onUpload(expense,pending)}>Salvar anexos selecionados</button>}{!expense.draft&&admin&&expense.status!=="Conciliado"&&<label className="field"><span>Referência do extrato conferido</span><input value={reference} onChange={e=>setReference(e.target.value)} placeholder="Identificador bancário da transação"/></label>}</div><div className="modal-footer"><button className="secondary-button" onClick={onClose}>Fechar</button>{expense.draft?<button className="primary-button" disabled={expense.docs<expense.requiredDocs} onClick={()=>onUpdate(expense,"submit")}>Registrar despesa</button>:admin&&expense.status!=="Conciliado"?<button className="primary-button" disabled={!reference.trim()} onClick={()=>onUpdate(expense,"reconcile",reference)}>Confirmar conferência do extrato</button>:null}</div></section></div>;
+}

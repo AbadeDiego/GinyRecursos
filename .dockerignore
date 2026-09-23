@@ -1,0 +1,14 @@
+node_modules
+.next
+.git
+.sites-runtime
+.wrangler
+.vinext
+dist
+data
+backups
+.env
+.env.*
+!.env.example
+*.sqlite*
+*.tsbuildinfo
