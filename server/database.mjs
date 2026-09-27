@@ -1,3 +1,4 @@
+import { sourceOf, budgetSource } from '../lib/funding.mjs';
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -38,6 +39,32 @@ export function openDatabase(path = process.env.DATABASE_PATH || './data/subvenc
       ALTER TABLE audit ADD COLUMN details TEXT;
       INSERT INTO migrations VALUES(2,datetime('now'));
       COMMIT;`);
+  }
+  if (!db.prepare('SELECT version FROM migrations WHERE version=3').get()) {
+    transaction(db,()=>{
+      // Keep explicit classifications. Infer legacy records from their rubric budget.
+      const budgets=db.prepare('SELECT project_id,data FROM budget').all().map(r=>({...JSON.parse(r.data),projectId:r.project_id}));
+      for(const table of ['schedule','expenses'])for(const row of db.prepare(`SELECT id,project_id,data FROM ${table}`).all()) {
+        const data=JSON.parse(row.data);
+        if(data.source)continue;
+        const matches=budgets.filter(b=>b.projectId===row.project_id&&b.elemento===(data.rubric||data.item));
+        const sources=new Set(matches.map(budgetSource));
+        data.source=sources.size===1?[...sources][0]:sourceOf(data);
+        data.sourceInferred=true;
+        db.prepare(`UPDATE ${table} SET data=? WHERE id=?`).run(JSON.stringify(data),row.id);
+      }
+      for(const row of db.prepare('SELECT id,data FROM remaps').all()) {
+        const data=JSON.parse(row.data);
+        const origin=data.sourceScheduleId?db.prepare('SELECT data FROM schedule WHERE id=?').get(data.sourceScheduleId):null;
+        if(!data.source)data.source=origin?sourceOf(JSON.parse(origin.data)):sourceOf({rubric:data.from});
+        if(data.destinationScheduleId) {
+          const target=db.prepare('SELECT data FROM schedule WHERE id=?').get(data.destinationScheduleId);
+          if(target){const destination=JSON.parse(target.data);if(destination.sourceInferred){destination.source=data.source;db.prepare('UPDATE schedule SET data=? WHERE id=?').run(JSON.stringify(destination),data.destinationScheduleId);}}
+        }
+        db.prepare('UPDATE remaps SET data=? WHERE id=?').run(JSON.stringify(data),row.id);
+      }
+      db.prepare("INSERT INTO migrations VALUES(3,datetime('now'))").run();
+    });
   }
   return db;
 }

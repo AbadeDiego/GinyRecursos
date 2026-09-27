@@ -5980,3 +5980,8 @@ h1, h2, h3 { letter-spacing: -.025em; }
 .account-form { margin-top:28px; }
 .panel-note { padding:20px; }
 .file-checklist a { color:inherit; text-decoration:none; }
+
+/* Financial sources are presented with separate execution and balances. */
+.metrics-grid.source-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@media (max-width: 1100px) { .metrics-grid.source-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 600px) { .metrics-grid.source-metrics { grid-template-columns: 1fr; } }

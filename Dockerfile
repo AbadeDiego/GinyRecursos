@@ -16,6 +16,7 @@ COPY --from=builder --chown=node:node /app/.next/standalone ./
 COPY --from=builder --chown=node:node /app/.next/static ./.next/static
 COPY --from=builder --chown=node:node /app/public ./public
 COPY --from=builder --chown=node:node /app/server ./server
+COPY --from=builder --chown=node:node /app/lib ./lib
 COPY --from=builder --chown=node:node /app/scripts/backup.mjs /app/scripts/check-env.mjs /app/scripts/user.mjs ./scripts/
 USER node
 EXPOSE 3000

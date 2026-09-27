@@ -121,20 +121,20 @@ test('Parcelas únicas, contrapartida e rendimentos não são truncados silencio
   assert.equal((await f.call('resources','POST',{...base,kind:'Rendimento de aplicação',value:0.20})).status,201);
   const state=(await f.call('state')).data;assert.equal(state.projects[0].released,5000);assert.equal(state.projects[0].counterpartRealized,2000);assert.equal(state.projects[0].income,0.30);f.db.close();
 });
-test('Remanejamento usa um item real e preserva o total após aprovação',async()=>{
+test('Remanejamento é aplicado ao salvar, preserva total e respeita idempotência',async()=>{
   const f=await fixture(),projectId=f.projectId;
   const source=(await f.call('schedule','POST',{...schedule,rubric:'Material de Consumo',value:5000,projectId})).data;
   const request={projectId,sourceScheduleId:source.id,to:'Consultoria',activity:'Nova consultoria técnica',month:'Fevereiro',year:2026,value:4000,reason:'Ajustar o planejamento'};
-  const r=await f.call('remaps','POST',request);assert.equal(r.status,201);
-  assert.equal((await f.call('state')).data.schedule.length,1);
-  assert.equal((await f.call('remaps/'+r.data.id,'PATCH',{version:1,authorization:'Ofício 01/2026'})).status,200);
+  const key=randomUUID(),r=await f.call('remaps','POST',request,{key});assert.equal(r.status,201);assert.equal(r.data.status,'Aprovado');
+  assert.equal((await f.call('remaps','POST',request,{key})).data.id,r.data.id);
+  assert.equal((await f.call('state')).data.schedule.length,2);
   const state=(await f.call('state')).data;
   assert.equal(state.schedule.find(s=>s.id===source.id).value,1000);
   assert.equal(state.schedule.find(s=>s.id!==source.id).value,4000);
   assert.equal(state.schedule.find(s=>s.id!==source.id).activity,request.activity);
   assert.equal(state.schedule.reduce((sum,s)=>sum+s.value,0),5000);
   assert.equal((await f.call('remaps','POST',{...request,value:2000})).status,422);
-  assert.equal((await f.call('remaps/'+r.data.id,'PATCH',{version:2,authorization:'Outra'})).status,409);
+  assert.equal((await f.call('remaps/'+r.data.id,'PATCH',{version:0,...request})).status,409);
   assert.equal((await f.call('expenses','POST',{...expense,projectId,rubric:'Consultoria',value:4000})).status,201);
   assert.equal((await f.call('expenses','POST',{...expense,projectId,rubric:'Consultoria',value:0.01})).status,422);
   f.db.close();
@@ -236,9 +236,8 @@ test('Sem anexos: registro e rascunho finalizam; conferência exige documentos',
 test('Saldo executado impede reduzir previsão e remanejar depois de gastar',async()=>{
   const f=await fixture(),projectId=f.projectId;
   const source=(await f.call('schedule','POST',{...schedule,projectId,rubric:expense.rubric,value:500})).data;
-  const remap=(await f.call('remaps','POST',{projectId,sourceScheduleId:source.id,to:'Bolsa',activity:'Bolsa de pesquisa',month:'Março',year:2026,value:400,reason:'Ajuste'})).data;
-  await f.call('expenses','POST',{...expense,projectId,value:200});
-  assert.equal((await f.call('remaps/'+remap.id,'PATCH',{version:1,authorization:'Ofício'})).status,422);
+  assert.equal((await f.call('expenses','POST',{...expense,projectId,value:200})).status,201);
+  assert.equal((await f.call('remaps','POST',{projectId,sourceScheduleId:source.id,to:'Bolsa',activity:'Bolsa de pesquisa',month:'Março',year:2026,value:400,reason:'Ajuste'})).status,422);
   assert.equal((await f.call('schedule/'+source.id,'PATCH',{...source,value:100})).status,422);
   assert.equal((await f.call('state')).data.schedule[0].value,500);f.db.close();
 });
@@ -262,9 +261,134 @@ test('Remanejamento preserva orçamento legado do destino e rejeita origem de ou
   const request={projectId,sourceScheduleId:source.id,to:'Consultoria',activity:'Nova atividade',month:'Março',year:2026,value:300,reason:'Ajuste'};
   assert.equal((await f.call('remaps','POST',{...request,projectId:second.id})).status,422);
   const remap=(await f.call('remaps','POST',request)).data;
-  assert.equal((await f.call('remaps/'+remap.id,'PATCH',{version:1,authorization:'Ofício'})).status,200);
+  assert.equal(remap.status,'Aprovado');
   const state=(await f.call('state')).data;
   assert.equal(state.schedule.reduce((sum,s)=>sum+s.value,0),1500);
   assert.equal(state.schedule.filter(s=>s.rubric==='Consultoria').reduce((sum,s)=>sum+s.value,0),800);
   f.db.close();
+});
+
+test('Fontes separadas na importação, pró-labore, limites e exclusão do cronograma',async()=>{
+ const f=await fixture(),projectId=f.projectId;
+ const imported=await f.call('schedule/import','POST',{projectId,rows:[{...schedule,rubric:'Consultoria',source:'Subvenção',value:1000},{...schedule,rubric:'Consultoria',source:'Contrapartida',value:500}]});assert.equal(imported.status,201);
+ assert.equal((await f.call('schedule','POST',{...schedule,projectId,source:'Contrapartida',value:1600})).status,422);
+ const monthly=await f.call('schedule','POST',{...schedule,projectId,rubric:'Pessoal / Pró-labore',source:'Contrapartida',value:100,monthsCount:3,year:2026,month:'Dezembro'});assert.equal(monthly.status,201);assert.ok(monthly.data.every(s=>s.source==='Contrapartida'));assert.equal(monthly.data[1].year,2027);
+ const counter=imported.data[1];assert.equal((await f.call('expenses','POST',{...expense,projectId,rubric:'Consultoria',source:'Contrapartida',value:400})).status,201);
+ assert.equal((await f.call('schedule/'+counter.id,'DELETE',{version:1})).status,422);
+ assert.equal((await f.call('schedule/'+counter.id,'PATCH',{...counter,source:'Subvenção'})).status,422);
+ assert.equal((await f.call('expenses','POST',{...expense,projectId,rubric:'Consultoria',source:'Subvenção',value:1000})).status,201);
+ assert.equal((await f.call('expenses','POST',{...expense,projectId,rubric:'Consultoria',source:'Contrapartida',value:101})).status,422);
+ assert.equal((await f.call('schedule/'+monthly.data[0].id,'DELETE',{version:1})).status,200);
+ const state=(await f.call('state')).data;assert.equal(state.projects[0].executedSubvention,1000);assert.equal(state.projects[0].executedCounterpart,400);assert.equal(state.projects[0].executed,1400);
+ assert.equal(state.schedule.find(s=>s.id===counter.id).source,'Contrapartida');f.db.close();
+});
+
+test('Orçamento importado preserva saldos separados para a mesma rubrica',async()=>{
+ const f=await fixture(),projectId=f.projectId;
+ const rows=[{...budgetRow,unitario:1000,qtd:1,valorTotal:1000},{...budgetRow,fonte:'Contrapartida',unitario:500,qtd:1,valorTotal:500}];
+ assert.equal((await f.call('budget/import','POST',{projectId,rows})).status,201);
+ assert.equal((await f.call('expenses','POST',{...expense,projectId,source:'Contrapartida',value:501})).status,422);
+ assert.equal((await f.call('expenses','POST',{...expense,projectId,source:'Contrapartida',value:500})).status,201);
+ assert.equal((await f.call('expenses','POST',{...expense,projectId,source:'Subvenção',value:1000})).status,201);
+ assert.equal((await f.call('budget/import','POST',{projectId,rows:[rows[0]]})).status,422);
+ const report=(await f.call('reports/'+projectId+'?format=json')).data;assert.equal(report.planning.length,2);assert.equal(report.project.executed,1500);f.db.close();
+});
+
+test('Remanejamento pode ser editado e excluído com reversão atômica e proteção de gastos',async()=>{
+ const f=await fixture(),projectId=f.projectId;
+ const source=(await f.call('schedule','POST',{...schedule,projectId,source:'Contrapartida',rubric:'Consultoria',value:1000})).data;
+ const remap=(await f.call('remaps','POST',{projectId,sourceScheduleId:source.id,to:'Bolsa',activity:'Pesquisa',month:'Março',year:2026,value:400,reason:'Ajuste'})).data;assert.equal(remap.source,'Contrapartida');
+ let state=(await f.call('state')).data;
+ assert.equal(state.schedule.find(s=>s.id===source.id).value,600);
+ const destination=state.schedule.find(s=>s.id===remap.destinationScheduleId);
+ assert.equal((await f.call('schedule/'+destination.id,'PATCH',{...destination,value:900})).status,422);
+ assert.equal((await f.call('schedule/'+destination.id,'DELETE',{version:1})).status,422);
+ const expenseResult=(await f.call('expenses','POST',{...expense,projectId,rubric:'Bolsa',source:'Contrapartida',value:350})).data;
+ assert.equal((await f.call('remaps/'+remap.id,'PATCH',{...remap,value:300})).status,422);
+ assert.equal((await f.call('remaps/'+remap.id,'DELETE',{version:1})).status,422);
+ state=(await f.call('state')).data;assert.equal(state.remaps[0].version,1);assert.equal(state.schedule.find(s=>s.id===source.id).value,600);
+ const changed=await f.call('remaps/'+remap.id,'PATCH',{...remap,value:500,reason:'Ajuste revisado'});assert.equal(changed.status,200);assert.equal(changed.data.version,2);
+ assert.equal((await f.call('remaps/'+remap.id,'DELETE',{version:1})).status,409);
+ assert.equal((await f.call('expenses/'+expenseResult.id,'DELETE',{version:1})).status,200);
+ assert.equal((await f.call('remaps/'+remap.id,'DELETE',{version:2})).status,200);
+ state=(await f.call('state')).data;assert.equal(state.remaps.length,0);assert.equal(state.schedule.length,1);assert.equal(state.schedule[0].value,1000);assert.ok(f.db.prepare("SELECT * FROM audit WHERE action='delete' AND entity='remaps'").get());f.db.close();
+});
+
+test('Remanejamentos encadeados exigem reversão do último destino primeiro',async()=>{
+ const f=await fixture(),projectId=f.projectId;
+ const source=(await f.call('schedule','POST',{...schedule,projectId,rubric:'Consultoria',value:1000})).data;
+ const input={projectId,to:'Bolsa',activity:'Pesquisa',month:'Março',year:2026,value:400,reason:'Ajuste'};
+ const first=(await f.call('remaps','POST',{...input,sourceScheduleId:source.id})).data;
+ const second=(await f.call('remaps','POST',{...input,sourceScheduleId:first.destinationScheduleId,to:'Material de Consumo',value:100})).data;
+ assert.equal((await f.call('remaps/'+first.id,'PATCH',{...first,reason:'Justificativa atualizada'})).status,200);
+ assert.equal((await f.call('remaps/'+first.id,'DELETE',{version:2})).status,422);
+ assert.equal((await f.call('remaps/'+second.id,'DELETE',{version:1})).status,200);
+ assert.equal((await f.call('remaps/'+first.id,'DELETE',{version:2})).status,200);
+ assert.equal((await f.call('state')).data.schedule[0].value,1000);f.db.close();
+});
+
+test('Recursos: editar valor, tipo e comprovante; conflitos, limites e exclusão',async()=>{
+ const f=await fixture(),projectId=f.projectId;
+ const input={projectId,kind:'Parcela da subvenção',value:5000,date:'2026-01-01',installment:1,reference:'PIX',notes:''};
+ const first=(await f.call('resources','POST',input,{files:{proof:pdf}})).data;
+ const second=(await f.call('resources','POST',{...input,installment:2})).data;
+ assert.equal((await f.call('resources/'+first.id,'PATCH',{...input,version:1,value:6000})).status,422);
+ assert.equal((await f.call('resources/'+first.id,'PATCH',{...input,version:1,installment:2})).status,409);
+ assert.equal((await f.call('resources/'+first.id,'PATCH',{...input,version:1,value:4000})).status,200);
+ let state=(await f.call('state')).data;const originalDoc=state.resources[0].documents[0].id;assert.equal((await f.call('documents/'+originalDoc)).data,pdf);
+ const replacement='%PDF-1.4\nnovo comprovante\n%%EOF';
+ assert.equal((await f.call('resources/'+first.id,'PATCH',{...input,version:2,value:1000,kind:'Contrapartida financeira'},{files:{proof:replacement}})).status,200);
+ state=(await f.call('state')).data;assert.equal(state.projects[0].released,5000);assert.equal(state.projects[0].counterpartRealized,1000);assert.equal(state.resources[0].installment,null);
+ assert.equal((await f.call('documents/'+originalDoc)).status,404);assert.equal((await f.call('documents/'+state.resources[0].documents[0].id)).data,replacement);
+ assert.equal((await f.call('resources/'+first.id,'DELETE',{version:2})).status,409);
+ assert.equal((await f.call('resources/'+first.id,'DELETE',{version:3})).status,200);
+ assert.equal((await f.call('resources/'+second.id,'DELETE',{version:1})).status,200);
+ assert.equal((await f.call('resources','POST',input)).status,201);assert.equal(f.db.prepare('SELECT count(*) AS n FROM documents').get().n,0);f.db.close();
+});
+
+test('Relatório completo separa fontes, protege HTML e concilia somente subvenção',async()=>{
+ const f=await fixture(),projectId=f.projectId;
+ await f.call('schedule','POST',{...schedule,projectId,rubric:'Consultoria',value:1000});
+ await f.call('schedule','POST',{...schedule,projectId,rubric:'Consultoria',value:500,source:'Contrapartida'});
+ const sub=(await f.call('expenses','POST',{...expense,projectId,rubric:'Consultoria',supplier:'<script>alert(1)</script>',value:100},{files:{invoice:pdf,payment:pdf}})).data;
+ const own=(await f.call('expenses','POST',{...expense,projectId,rubric:'Consultoria',source:'Contrapartida',value:200},{files:{invoice:pdf,payment:pdf}})).data;
+ await f.call('expenses','POST',{...expense,projectId,rubric:'Consultoria',source:'Contrapartida',value:50,draft:true});
+ assert.equal((await f.call('expenses/'+own.id,'PATCH',{version:1,action:'reconcile',bankReference:'OWN'})).status,422);
+ assert.equal((await f.call('expenses/'+sub.id,'PATCH',{version:1,action:'reconcile',bankReference:'PIX'})).status,200);
+ for(const [kind,value]of [['Parcela da subvenção',1000],['Contrapartida financeira',500],['Rendimento de aplicação',0.3]])assert.equal((await f.call('resources','POST',{projectId,kind,value,date:'2026-01-01',reference:'QA',installment:1})).status,201);
+ const report=(await f.call('reports/'+projectId+'?format=json')).data;
+ assert.equal(report.project.executedSubvention,100);assert.equal(report.project.executedCounterpart,200);assert.equal(report.reconciliation.balance,900.3);assert.equal(report.reconciliation.outgoing.length,1);assert.equal(report.reconciliation.incoming.length,2);
+ assert.equal(report.expenses.length,3);assert.equal(report.planning.length,2);
+ const html=(await f.call('reports/'+projectId+'?format=html')).data;assert.ok(!html.includes('<script>alert(1)</script>'));assert.ok(html.includes('&lt;script&gt;'));assert.match(html,/9\. Links e referências/);assert.match(html,/Imprimir \/ Salvar em PDF/);
+ const csv=(await f.call('reports/'+projectId)).data;assert.match(csv,/Fonte/);assert.match(csv,/Contrapartida/);
+ const second=(await f.call('projects','POST',{...f.project,companyId:f.company.id,code:'R2',name:'Outro projeto'})).data;
+ const other=(await f.call('reports/'+second.id+'?format=json')).data;assert.equal(other.expenses.length,0);assert.equal(other.resources.length,0);assert.equal(other.project.executedSubvention,0);f.db.close();
+});
+
+test('Migração 3 classifica legado sem apagar contas, documentos ou valores',async()=>{
+ const dir=mkdtempSync(join(tmpdir(),'funding-migration-')),path=join(dir,'db.sqlite');let db=openDatabase(path);createUser(db,admin);
+ db.prepare('INSERT INTO companies(id,data) VALUES(?,?)').run('c',JSON.stringify({name:'Empresa anterior'}));
+ db.prepare('INSERT INTO projects(id,company_id,data) VALUES(?,?,?)').run('p','c',JSON.stringify({approved:10000,counterpart:2000}));
+ db.prepare('INSERT INTO budget(id,project_id,data,value_cents) VALUES(?,?,?,?)').run('b','p',JSON.stringify({...budgetRow,fonte:'Contrapartida',elemento:'Consultoria',valorTotal:500}),50000);
+ db.prepare('INSERT INTO schedule(id,project_id,data,value_cents) VALUES(?,?,?,?)').run('s','p',JSON.stringify({...schedule,rubric:'Consultoria',value:500}),50000);
+ db.prepare('INSERT INTO expenses(id,project_id,data,value_cents) VALUES(?,?,?,?)').run('e','p',JSON.stringify({...expense,rubric:'Consultoria',value:200}),20000);
+ db.prepare('INSERT INTO documents VALUES(?,?,?,?,?,?,?,?,?)').run('d','p','e',null,'invoice','old.pdf','application/pdf',Buffer.from(pdf),new Date().toISOString());
+ db.exec('DELETE FROM migrations WHERE version=3');db.close();db=openDatabase(path);
+ assert.equal(JSON.parse(db.prepare("SELECT data FROM schedule WHERE id='s'").get().data).source,'Contrapartida');
+ assert.equal(JSON.parse(db.prepare("SELECT data FROM expenses WHERE id='e'").get().data).source,'Contrapartida');
+ assert.equal(db.prepare("SELECT value_cents FROM expenses WHERE id='e'").get().value_cents,20000);
+ assert.equal(Buffer.from(db.prepare("SELECT bytes FROM documents WHERE id='d'").get().bytes).toString(),pdf);
+ assert.equal(db.prepare('SELECT count(*) AS n FROM users').get().n,1);db.close();db=openDatabase(path);assert.equal(db.prepare('SELECT count(*) AS n FROM migrations WHERE version=3').get().n,1);assert.equal(db.prepare('PRAGMA integrity_check').get().integrity_check,'ok');db.close();rmSync(dir,{recursive:true});
+});
+
+test('Transferência na mesma rubrica preserva gastos e o status do destino na edição',async()=>{
+ const f=await fixture(),projectId=f.projectId;
+ const source=(await f.call('schedule','POST',{...schedule,projectId,rubric:'Consultoria',value:1000})).data;
+ assert.equal((await f.call('expenses','POST',{...expense,projectId,rubric:'Consultoria',value:900})).status,201);
+ const result=await f.call('remaps','POST',{projectId,sourceScheduleId:source.id,to:'Consultoria',activity:'Etapa seguinte',month:'Março',year:2026,value:500,reason:'Reprogramar'});assert.equal(result.status,201);
+ const target=(await f.call('state')).data.schedule.find(s=>s.id===result.data.destinationScheduleId);
+ assert.equal((await f.call('schedule/'+target.id,'PATCH',{...target,status:'Concluída'})).status,200);
+ assert.equal((await f.call('remaps/'+result.data.id,'PATCH',{...result.data,value:600,reason:'Reprogramação revisada'})).status,200);
+ let state=(await f.call('state')).data;assert.equal(state.schedule.find(s=>s.id===state.remaps[0].destinationScheduleId).status,'Concluída');assert.equal(state.projects[0].executed,900);
+ assert.equal((await f.call('remaps/'+result.data.id,'DELETE',{version:2})).status,200);state=(await f.call('state')).data;assert.equal(state.schedule[0].value,1000);f.db.close();
 });

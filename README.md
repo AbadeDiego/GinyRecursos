@@ -30,7 +30,7 @@ Utilize **uma única réplica**, com disco local. Não compartilhe o arquivo SQL
 
 1. Execute `node scripts/backup.mjs` no container atual e guarde uma cópia fora da VPS.
 2. Atualize os arquivos no mesmo repositório e recurso do Coolify. Mantenha os volumes existentes, especialmente `/data`, e as variáveis de ambiente.
-3. Faça o deploy. A migração 2 é executada automaticamente e preserva os registros anteriores; adiciona o cadastro de rubricas e detalhes de auditoria.
+3. Faça o deploy. As migrações são executadas automaticamente. A migração 3 preserva contas, documentos e valores e adiciona a fonte aos registros anteriores; confira a classificação indicada na edição de cada registro.
 4. Confira `/api/health`, login, cronograma e lançamentos. Não recrie a instalação nem apague os volumes para atualizar.
 
 A tela com campos separados deve usar **Protocol: https**, **Domain: somente o hostname** e **Port: 3000**. Em uma tela com um único campo Domains, use `https://hostname:3000`. `APP_ORIGIN` é sempre a URL pública HTTPS, sem a porta interna e sem barra final.
@@ -40,13 +40,16 @@ Se o container ficar em `restarting`, consulte os logs da aplicação: `scripts/
 ## Fluxos atualizados
 
 - **Visão geral:** Execução por rubrica lista apenas rubricas presentes no cronograma; sem previsões, o quadro fica vazio.
-- **Planejamento e saldos:** a soma do cronograma de uma rubrica define seu valor planejado. Para rubricas sem cronograma, o orçamento anteriormente importado continua válido. Remanejamentos antigos aprovados continuam contabilizados. Ao planejar uma rubrica já existente, cadastre seu valor total; a previsão não pode ficar abaixo do que já foi gasto.
+- **Planejamento e saldos:** a soma do cronograma por rubrica e fonte define seu valor planejado. Subvenção e contrapartida têm limites separados. Para pares de rubrica/fonte sem cronograma, o orçamento anteriormente importado continua válido. Remanejamentos antigos aprovados continuam contabilizados. Ao planejar uma rubrica já existente, cadastre seu valor total; a previsão não pode ficar abaixo do que já foi gasto.
 - **Pró-labore:** escolha Pessoal / Pró-labore, valor mensal, mês/ano inicial e quantidade de meses (1 a 60). Cada parcela é editável separadamente; a mudança de dezembro para janeiro avança o ano. As previsões não criam despesas automaticamente.
-- **CSV do cronograma:** `rubrica;atividade;valor;mês`, com `ano` e `meses` opcionais. `meses` expande o pró-labore; `valor` é por mês. Sem `ano`, usa o primeiro mês correspondente a partir do início do projeto. O cabeçalho antigo `item` continua aceito.
-- **Rubricas:** cadastro personalizado por projeto, disponível no cronograma, lançamentos e remanejamentos. Contrapartida está incluída; seu saldo usa o cronograma/orçamento da rubrica ou, na ausência deles, a contrapartida prevista do projeto.
+- **CSV do cronograma:** `rubrica;fonte;atividade;valor;mês;ano;meses`. Fonte aceita `Subvenção` ou `Contrapartida`; `ano` e `meses` são opcionais. Arquivos anteriores sem fonte continuam aceitos: Subvenção é o padrão, exceto a rubrica Contrapartida. `meses` expande o pró-labore; `valor` é por mês. Sem `ano`, usa o primeiro mês correspondente a partir do início do projeto. O cabeçalho antigo `item` continua aceito.
+- **Rubricas:** cadastro personalizado por projeto, disponível no cronograma, lançamentos e remanejamentos. Contrapartida está incluída; seu saldo usa o cronograma/orçamento da rubrica e fonte ou, na ausência deles, a contrapartida prevista ainda não alocada a outras rubricas dessa fonte.
 - **Despesas:** documentos podem ser enviados depois, inclusive para serviços de terceiros. A despesa registrada conta no valor executado mesmo com anexos pendentes. A tabela, os detalhes e a Central de documentos destacam as pendências. A conferência bancária mantém a exigência de completar o checklist.
 - **Edição/exclusão:** editar recalcula saldos e devolve despesas conciliadas para Em análise. A exclusão confirmada remove a despesa e seus anexos e recalcula os totais; a auditoria preserva os dados do registro excluído.
-- **Remanejamento:** selecione um item real de origem, informe a rubrica e a atividade do novo item, mês/ano, valor e justificativa. A aprovação exige referência da autorização e valida novamente saldo e versão da origem. Um orçamento legado no destino é preservado como previsão no cronograma.
+- **Remanejamento:** selecione um item real de origem, informe a rubrica e a atividade do novo item, mês/ano, valor e justificativa. O valor é aplicado imediatamente, na mesma fonte da origem. Editar recalcula a transferência e excluir devolve o valor à origem; gastos no destino e remanejamentos posteriores impedem reversões incompatíveis. Justificativa e prazos continuam editáveis em transferências encadeadas. Um orçamento legado no destino é preservado como previsão no cronograma.
+- **Recursos e parcelas:** edição e exclusão recalculam entradas e saldos. A edição aceita substituir o comprovante; excluir remove o comprovante e libera o número da parcela.
+- **Cronograma:** fonte selecionável no cadastro manual e no CSV; exclusão disponível dentro da edição, com confirmação.
+- **Dados anteriores:** a fonte é inferida do orçamento quando há uma única fonte para a rubrica; nos demais casos, Subvenção, exceto a rubrica Contrapartida. Registros migrados exibem “Conferir fonte”. Remanejamentos antigos pendentes são aplicados ao editar e salvar, sem aprovação separada.
 - **Tipografia:** Geist local, incluída com licença em `public/fonts`; o carregamento não depende de serviços externos.
 
 ## Funcionalidades
@@ -58,15 +61,15 @@ Se o container ficar em `restarting`, consulte os logs da aplicação: `scripts/
 - Orçamento por rubrica com importação atômica e validação de valores.
 - Despesas e rascunhos, documentos reais, finalização e conferência com referência bancária.
 - Parcelas, contrapartida financeira e rendimentos. Duplicações de parcelas e valores acima dos limites são rejeitados.
-- Remanejamentos a partir de um item do cronograma: nova rubrica/atividade, mês/ano, valor e justificativa. A aprovação reduz a origem e cria a previsão de destino em uma única transação.
+- Remanejamentos a partir de um item do cronograma: nova rubrica/atividade, mês/ano, valor e justificativa. Salvar reduz a origem e cria a previsão de destino em uma única transação, sem etapa de aprovação.
 - Links HTTP/HTTPS, downloads autenticados, exportação CSV e resumo financeiro JSON.
 - Auditoria das operações na API, disponível ao administrador.
 
 **Acesso:** todos os usuários autorizados compartilham a mesma organização e seus projetos. Não existe isolamento de organizações independentes na mesma instalação.
 
-**Conferência financeira:** o fluxo é calculado pelos registros cadastrados. Não existe integração bancária. Marcar uma despesa como conciliada registra a conferência feita pelo administrador, sem confirmar uma transação junto ao banco.
+**Conferência financeira:** somente a conta de subvenção participa da conciliação, incluindo parcelas, rendimentos e despesas cuja fonte é Subvenção. O fluxo é calculado pelos registros cadastrados. Não existe integração bancária. Marcar uma despesa como conciliada registra a conferência feita pelo administrador, sem confirmar uma transação junto ao banco.
 
-**Relatórios:** CSV de lançamentos e resumo financeiro JSON. Não há geração de relatórios oficiais do concedente, assinatura digital ou envio automático de prestação de contas.
+**Relatórios:** relatório HTML com resumo por fonte, planejamento/execução por rubrica, recursos, despesas e documentos, conciliação da subvenção, cronograma, remanejamentos, equipe e links. O botão Imprimir / Salvar em PDF usa o navegador. Exportações de lançamentos CSV e de dados completos JSON também estão disponíveis. Não há geração de relatórios oficiais do concedente, assinatura digital ou envio automático de prestação de contas.
 
 **Documentos:** PDF, JPEG e PNG, até 10 MB por arquivo. Os bytes ficam no banco e nos backups. O backend verifica o cabeçalho do formato; isso não equivale a antivírus ou validação fiscal do conteúdo.
 
@@ -153,10 +156,12 @@ Exceto login e healthcheck, as rotas exigem cookie de sessão. Escritas precisam
 | `POST /api/expenses/:id/documents`, `/api/resources/:id/documents` | Anexos multipart |
 | `PATCH /api/expenses/:id` | `edit` com campos da despesa, `submit` ou `reconcile` com `bankReference`; exige versão |
 | `POST /api/remaps` | Solicitação |
-| `PATCH /api/remaps/:id` | Referência `authorization` recebida do concedente |
+| `PATCH/DELETE /api/remaps/:id` | Editar/reverter a transferência, com versão e validação de saldos |
+| `PATCH/DELETE /api/resources/:id` | Editar/excluir recursos; anexos preservados ou substituídos na edição |
 | `GET /api/documents/:id` | Original autenticado |
 | `GET /api/reports/:projectId` | CSV de lançamentos |
-| `GET /api/reports/:projectId?format=json` | Resumo financeiro |
+| `GET /api/reports/:projectId?format=json` | Dados completos do projeto, incluindo resumo por fonte |
+| `GET /api/reports/:projectId?format=html` | Relatório para visualizar, imprimir ou salvar em PDF |
 | `GET /api/audit` | Últimas 500 operações, administrador |
 
 ## Estado da entrega

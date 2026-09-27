@@ -29,6 +29,7 @@ test('Produção standalone: autenticação, cookies, CRUD, anexos e reinício',
  try{
   cpSync('.next/standalone',deployed,{recursive:true});
   cpSync('.next/static',join(deployed,'.next/static'),{recursive:true});cpSync('public',join(deployed,'public'),{recursive:true});
+  for(const folder of ['server','scripts','lib'])cpSync(folder,join(deployed,folder),{recursive:true});
   await start();
   assert.equal((await fetch(base+'/fonts/Geist-latin.woff2')).status,200);
   const root=await fetch(base);assert.equal(root.status,200);assert.match(await root.text(),/Gestão de Subvenção/);assert.equal(root.headers.get('x-frame-options'),'DENY');
@@ -52,11 +53,15 @@ test('Produção standalone: autenticação, cookies, CRUD, anexos e reinício',
   const pendingExpense=await pending.json();
   assert.equal((await call('expenses/'+pendingExpense.id,'PATCH',{action:'edit',version:1,value:250})).status,200);
   const remap=await call('remaps','POST',{projectId:project.id,sourceScheduleId:installments[1].id,to:'Bolsa',activity:'Pesquisa aplicada',month:'Janeiro',year:2027,value:100,reason:'Ajuste de execução'});assert.equal(remap.status,201);
-  const remapData=await remap.json();assert.equal((await call('remaps/'+remapData.id,'PATCH',{version:1,authorization:'Ofício QA'})).status,200);
+  const remapData=await remap.json();assert.equal(remapData.status,'Aprovado');
+  assert.equal((await call('remaps/'+remapData.id,'PATCH',{...remapData,value:120,version:1})).status,200);
   state=await(await call('state')).json();assert.equal(state.projects[0].executed,350.30);assert.equal(state.expenses.find(e=>e.id===pendingExpense.id).docs,0);
-  await stop();await start();state=await(await call('state')).json();assert.equal(state.projects[0].executed,350.30);assert.equal(state.schedule.find(s=>s.rubric==='Bolsa').value,100);
+  await stop();await start();state=await(await call('state')).json();assert.equal(state.projects[0].executed,350.30);assert.equal(state.schedule.find(s=>s.rubric==='Bolsa').value,120);
   assert.equal((await call('expenses/'+pendingExpense.id,'DELETE',{version:2})).status,200);
-  const backupPath=execFileSync(process.execPath,['scripts/backup.mjs'],{env:{...env,BACKUP_DIR:join(dir,'backups')},encoding:'utf8'}).trim();
+  assert.equal((await call('remaps/'+remapData.id,'DELETE',{version:2})).status,200);
+  assert.match(await(await call('reports/'+project.id+'?format=html')).text(),/Resumo financeiro por fonte/);
+  const report=await(await call('reports/'+project.id+'?format=json')).json();assert.equal(report.project.executedSubvention,100.30);assert.equal(report.project.executedCounterpart,0);
+  const backupPath=execFileSync(process.execPath,[join(deployed,'scripts/backup.mjs')],{env:{...env,BACKUP_DIR:join(dir,'backups')},encoding:'utf8'}).trim();
   await stop();env.DATABASE_PATH=backupPath;await start();
   assert.equal(await(await call('documents/'+documentId)).text(),bytes);
   assert.equal((await(await call('state')).json()).projects[0].executed,100.30);

@@ -1,3 +1,7 @@
+-- Migração 3: source (Subvenção/Contrapartida) nos JSONs de schedule,
+-- expenses e remaps. sourceInferred sinaliza registros anteriores para revisão.
+-- As operações financeiras mantêm value_cents e version consistentes.
+-- Recursos guardam a fonte pelo kind; documentos continuam no banco.
 -- Referência gerada; as migrações são executadas pela aplicação.
 CREATE TABLE audit(id INTEGER PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), action TEXT NOT NULL, entity TEXT NOT NULL, entity_id TEXT NOT NULL, created_at TEXT NOT NULL, details TEXT);
 

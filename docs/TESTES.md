@@ -17,12 +17,15 @@ Ambiente: Node.js 24.19.0, Linux, bancos SQLite temporários. A validação HTTP
 | Despesas | Registro sem documentos, pendências, rascunho, edição, exclusão, saldos, auditoria e conferência |
 | Upload | Armazenamento/download dos bytes; bloqueio de formatos inválidos e mais de 10 MB |
 | Recursos | Parcelas únicas, limites e soma exata dos rendimentos |
-| Remanejamentos | Origem real do cronograma, vínculo por projeto, saldo, autorização, destino e preservação do orçamento legado |
+| Remanejamentos | Origem real do cronograma, vínculo por projeto, aplicação imediata, edição, reversão atômica, cadeias, proteção de gastos e preservação do orçamento legado |
 | Links e CSV | Protocolos permitidos, neutralização de fórmulas, BOM, aspas e multilinha |
 | Persistência | Reabertura do banco e reinício do servidor preservam registros e anexos |
 | Backup | Cópia consistente, integridade e servidor iniciado com backup restaurado |
 | Produção | HTML, fonte local, cabeçalhos, cookie HttpOnly, parcelas mensais, despesa sem anexos, edição, exclusão, remanejamento e reinício pela camada HTTP real |
 | Migração | Atualização do esquema anterior com contas e empresas preservadas |
+| Fontes | Limites, orçamento, CSV via API e parcelas mensais separados entre Subvenção e Contrapartida |
+| Recursos | Edição de valores/tipo, substituição de comprovante, conflito de parcela, versão e exclusão |
+| Relatório | Totais por fonte, extrato apenas da subvenção, isolamento entre projetos, HTML escapado e CSV |
 | Rubricas | Personalizadas, duplicidade e limites de contrapartida |
 
 Comando reprodutível:
@@ -31,13 +34,13 @@ Comando reprodutível:
 npm run test:all
 ```
 
-Resultado da execução em 27/09/2026: **25 testes aprovados, zero falhas**, verificação TypeScript e build concluídos.
+Resultado da execução em 27/09/2026: **33 testes aprovados, zero falhas**, verificação TypeScript e build concluídos.
 
-A suíte contém 24 testes de domínio/integração e 1 cenário HTTP de produção com múltiplas verificações. TypeScript e build fazem parte do comando. Arquivos em `tests/backend.test.mjs` e `tests/production.test.mjs`.
+A suíte contém 32 testes de domínio/integração e 1 cenário HTTP de produção com múltiplas verificações. TypeScript e build fazem parte do comando. Arquivos em `tests/backend.test.mjs` e `tests/production.test.mjs`.
 
 ## Homologação no destino
 
-Não há Docker daemon nem acesso à Hostinger/Coolify neste ambiente. O servidor standalone foi executado diretamente em Node.js. A imagem Docker e o deploy precisam ser validados no destino. A tentativa de prévia no navegador remoto não alcançou o servidor local; não se afirma teste visual ponta a ponta das telas autenticadas.
+Não há Docker daemon nem acesso à Hostinger/Coolify neste ambiente. O servidor standalone foi executado diretamente em Node.js. A imagem Docker e o deploy precisam ser validados no destino. Nesta revisão, a instalação do Chromium para teste visual local falhou no download. Não se afirma teste visual ponta a ponta das telas autenticadas nem da paginação final do PDF no navegador.
 
 Antes do uso real:
 
