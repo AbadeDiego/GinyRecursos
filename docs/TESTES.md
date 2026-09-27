@@ -11,17 +11,19 @@ Ambiente: Node.js 24.19.0, Linux, bancos SQLite temporários. A validação HTTP
 | Origem | Escrita com origem divergente bloqueada |
 | Equipe | Inclusão, edição, exclusão, importação atômica e vínculos por projeto |
 | Concorrência | Duas atualizações da mesma versão resultam em sucesso e conflito |
-| Cronograma | Mês por extenso, status, persistência e valores inválidos |
+| Cronograma | Mês/ano, status, parcelas mensais atravessando o ano, edição de uma parcela e rollback por limite |
 | Idempotência | Repetições JSON/multipart não duplicam; mesma chave com outros dados é recusada |
 | Orçamento | Saldo por rubrica e rollback de importação incompatível com a execução |
-| Despesas | Rascunho, documentos obrigatórios, finalização, totais e conferência |
+| Despesas | Registro sem documentos, pendências, rascunho, edição, exclusão, saldos, auditoria e conferência |
 | Upload | Armazenamento/download dos bytes; bloqueio de formatos inválidos e mais de 10 MB |
 | Recursos | Parcelas únicas, limites e soma exata dos rendimentos |
-| Remanejamentos | Autorização administrativa, referência e saldo de origem |
+| Remanejamentos | Origem real do cronograma, vínculo por projeto, saldo, autorização, destino e preservação do orçamento legado |
 | Links e CSV | Protocolos permitidos, neutralização de fórmulas, BOM, aspas e multilinha |
 | Persistência | Reabertura do banco e reinício do servidor preservam registros e anexos |
 | Backup | Cópia consistente, integridade e servidor iniciado com backup restaurado |
-| Produção | HTML, cabeçalhos, cookie HttpOnly e fluxos pela camada HTTP real |
+| Produção | HTML, fonte local, cabeçalhos, cookie HttpOnly, parcelas mensais, despesa sem anexos, edição, exclusão, remanejamento e reinício pela camada HTTP real |
+| Migração | Atualização do esquema anterior com contas e empresas preservadas |
+| Rubricas | Personalizadas, duplicidade e limites de contrapartida |
 
 Comando reprodutível:
 
@@ -29,9 +31,9 @@ Comando reprodutível:
 npm run test:all
 ```
 
-Resultado da execução em 23/09/2026: **18 testes aprovados, zero falhas**, verificação TypeScript e build concluídos.
+Resultado da execução em 27/09/2026: **25 testes aprovados, zero falhas**, verificação TypeScript e build concluídos.
 
-A suíte contém 17 testes de domínio/integração e 1 cenário HTTP de produção com múltiplas verificações. TypeScript e build fazem parte do comando. Arquivos em `tests/backend.test.mjs` e `tests/production.test.mjs`.
+A suíte contém 24 testes de domínio/integração e 1 cenário HTTP de produção com múltiplas verificações. TypeScript e build fazem parte do comando. Arquivos em `tests/backend.test.mjs` e `tests/production.test.mjs`.
 
 ## Homologação no destino
 

@@ -30,6 +30,15 @@ export function openDatabase(path = process.env.DATABASE_PATH || './data/subvenc
       COMMIT;`);
     for (const table of ['team','schedule','links','expenses','resources','budget','remaps','documents']) db.exec(`CREATE INDEX IF NOT EXISTS ${table}_project ON ${table}(project_id)`);
   }
+  if (!db.prepare('SELECT version FROM migrations WHERE version=2').get()) {
+    db.exec(`BEGIN IMMEDIATE;
+      CREATE TABLE rubrics(id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id), data TEXT NOT NULL CHECK(json_valid(data)), version INTEGER NOT NULL DEFAULT 1);
+      CREATE INDEX rubrics_project ON rubrics(project_id);
+      CREATE UNIQUE INDEX rubrics_name ON rubrics(project_id, lower(json_extract(data, '$.name')));
+      ALTER TABLE audit ADD COLUMN details TEXT;
+      INSERT INTO migrations VALUES(2,datetime('now'));
+      COMMIT;`);
+  }
   return db;
 }
 

@@ -1,7 +1,5 @@
--- Referência da migração 1. A aplicação executa server/database.mjs automaticamente.
-PRAGMA foreign_keys=ON;
-
-CREATE TABLE audit(id INTEGER PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), action TEXT NOT NULL, entity TEXT NOT NULL, entity_id TEXT NOT NULL, created_at TEXT NOT NULL);
+-- Referência gerada; as migrações são executadas pela aplicação.
+CREATE TABLE audit(id INTEGER PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), action TEXT NOT NULL, entity TEXT NOT NULL, entity_id TEXT NOT NULL, created_at TEXT NOT NULL, details TEXT);
 
 CREATE TABLE budget(id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id), data TEXT NOT NULL CHECK(json_valid(data)), value_cents INTEGER NOT NULL CHECK(value_cents>=0), version INTEGER NOT NULL DEFAULT 1);
 
@@ -25,6 +23,8 @@ CREATE TABLE requests(user_id TEXT NOT NULL REFERENCES users(id), key TEXT NOT N
 
 CREATE TABLE resources(id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id), data TEXT NOT NULL CHECK(json_valid(data)), value_cents INTEGER NOT NULL CHECK(value_cents>0), installment INTEGER, version INTEGER NOT NULL DEFAULT 1, UNIQUE(project_id,installment));
 
+CREATE TABLE rubrics(id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id), data TEXT NOT NULL CHECK(json_valid(data)), version INTEGER NOT NULL DEFAULT 1);
+
 CREATE TABLE schedule(id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id), data TEXT NOT NULL CHECK(json_valid(data)), value_cents INTEGER NOT NULL CHECK(value_cents>=0), version INTEGER NOT NULL DEFAULT 1);
 
 CREATE TABLE sessions(token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, expires INTEGER NOT NULL);
@@ -46,6 +46,10 @@ CREATE INDEX projects_company ON projects(company_id);
 CREATE INDEX remaps_project ON remaps(project_id);
 
 CREATE INDEX resources_project ON resources(project_id);
+
+CREATE UNIQUE INDEX rubrics_name ON rubrics(project_id, lower(json_extract(data, '$.name')));
+
+CREATE INDEX rubrics_project ON rubrics(project_id);
 
 CREATE INDEX schedule_project ON schedule(project_id);
 

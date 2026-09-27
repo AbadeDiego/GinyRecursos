@@ -26,16 +26,39 @@ Aplicação React/Next.js com API Node.js 24, autenticação própria e banco SQ
 
 Utilize **uma única réplica**, com disco local. Não compartilhe o arquivo SQLite por NFS nem distribua réplicas entre servidores. Esta configuração atende uma organização em uma VPS. Múltiplos servidores ou grande volume de escrita simultânea exigirão migração para PostgreSQL e armazenamento externo de arquivos.
 
+## Atualização de uma instalação existente
+
+1. Execute `node scripts/backup.mjs` no container atual e guarde uma cópia fora da VPS.
+2. Atualize os arquivos no mesmo repositório e recurso do Coolify. Mantenha os volumes existentes, especialmente `/data`, e as variáveis de ambiente.
+3. Faça o deploy. A migração 2 é executada automaticamente e preserva os registros anteriores; adiciona o cadastro de rubricas e detalhes de auditoria.
+4. Confira `/api/health`, login, cronograma e lançamentos. Não recrie a instalação nem apague os volumes para atualizar.
+
+A tela com campos separados deve usar **Protocol: https**, **Domain: somente o hostname** e **Port: 3000**. Em uma tela com um único campo Domains, use `https://hostname:3000`. `APP_ORIGIN` é sempre a URL pública HTTPS, sem a porta interna e sem barra final.
+
+Se o container ficar em `restarting`, consulte os logs da aplicação: `scripts/check-env.mjs` rejeita origem inválida, HTTP público em produção ou senha inicial com menos de 12 caracteres.
+
+## Fluxos atualizados
+
+- **Visão geral:** Execução por rubrica lista apenas rubricas presentes no cronograma; sem previsões, o quadro fica vazio.
+- **Planejamento e saldos:** a soma do cronograma de uma rubrica define seu valor planejado. Para rubricas sem cronograma, o orçamento anteriormente importado continua válido. Remanejamentos antigos aprovados continuam contabilizados. Ao planejar uma rubrica já existente, cadastre seu valor total; a previsão não pode ficar abaixo do que já foi gasto.
+- **Pró-labore:** escolha Pessoal / Pró-labore, valor mensal, mês/ano inicial e quantidade de meses (1 a 60). Cada parcela é editável separadamente; a mudança de dezembro para janeiro avança o ano. As previsões não criam despesas automaticamente.
+- **CSV do cronograma:** `rubrica;atividade;valor;mês`, com `ano` e `meses` opcionais. `meses` expande o pró-labore; `valor` é por mês. Sem `ano`, usa o primeiro mês correspondente a partir do início do projeto. O cabeçalho antigo `item` continua aceito.
+- **Rubricas:** cadastro personalizado por projeto, disponível no cronograma, lançamentos e remanejamentos. Contrapartida está incluída; seu saldo usa o cronograma/orçamento da rubrica ou, na ausência deles, a contrapartida prevista do projeto.
+- **Despesas:** documentos podem ser enviados depois, inclusive para serviços de terceiros. A despesa registrada conta no valor executado mesmo com anexos pendentes. A tabela, os detalhes e a Central de documentos destacam as pendências. A conferência bancária mantém a exigência de completar o checklist.
+- **Edição/exclusão:** editar recalcula saldos e devolve despesas conciliadas para Em análise. A exclusão confirmada remove a despesa e seus anexos e recalcula os totais; a auditoria preserva os dados do registro excluído.
+- **Remanejamento:** selecione um item real de origem, informe a rubrica e a atividade do novo item, mês/ano, valor e justificativa. A aprovação exige referência da autorização e valida novamente saldo e versão da origem. Um orçamento legado no destino é preservado como previsão no cronograma.
+- **Tipografia:** Geist local, incluída com licença em `public/fonts`; o carregamento não depende de serviços externos.
+
 ## Funcionalidades
 
 - Login, logout, troca de senha e usuários com perfis administrador, editor e consulta.
 - Empresas e projetos persistentes.
 - Equipe técnica com cadastro, edição, exclusão e importação CSV.
-- Cronograma com importação, edição, mês por extenso e status.
+- Cronograma com cadastro manual, CSV, rubrica, mês/ano, edição e status. Pró-labore gera uma previsão por mês, com valor mensal e quantidade de meses.
 - Orçamento por rubrica com importação atômica e validação de valores.
 - Despesas e rascunhos, documentos reais, finalização e conferência com referência bancária.
 - Parcelas, contrapartida financeira e rendimentos. Duplicações de parcelas e valores acima dos limites são rejeitados.
-- Remanejamentos com referência de autorização do concedente e validação do saldo.
+- Remanejamentos a partir de um item do cronograma: nova rubrica/atividade, mês/ano, valor e justificativa. A aprovação reduz a origem e cria a previsão de destino em uma única transação.
 - Links HTTP/HTTPS, downloads autenticados, exportação CSV e resumo financeiro JSON.
 - Auditoria das operações na API, disponível ao administrador.
 
@@ -51,7 +74,7 @@ Utilize **uma única réplica**, com disco local. Não compartilhe o arquivo SQL
 
 A migração versionada está em `server/database.mjs`; `docs/schema.sql` é a referência legível. A migração é executada automaticamente uma única vez. Não importe o SQL manualmente.
 
-Tabelas de domínio: `companies`, `projects`, `team`, `schedule`, `budget`, `expenses`, `resources`, `remaps` e `links`. `documents` relaciona arquivos às despesas e recursos. `users` e `sessions` guardam identidades e sessões; `audit` registra operações; `requests` evita repetição de requisições; `login_attempts` limita tentativas de senha; `migrations` registra a versão.
+Tabelas de domínio: `companies`, `projects`, `team`, `schedule`, `budget`, `expenses`, `resources`, `remaps`, `rubrics` e `links`. `documents` relaciona arquivos às despesas e recursos. `users` e `sessions` guardam identidades e sessões; `audit` registra operações; `requests` evita repetição de requisições; `login_attempts` limita tentativas de senha; `migrations` registra a versão.
 
 Chaves estrangeiras mantêm a vinculação dos registros. Os valores movimentados são armazenados também em centavos inteiros e os cálculos somam centavos. Edições exigem a versão atual do registro e retornam conflito em vez de sobrescrever outra alteração.
 
@@ -113,6 +136,8 @@ Exceto login e healthcheck, as rotas exigem cookie de sessão. Escritas precisam
 
 | Método e caminho | Função |
 | --- | --- |
+| `POST /api/rubrics` | Cadastro de rubrica personalizada por projeto |
+| `DELETE /api/expenses/:id` | Exclusão com versão, anexos removidos e auditoria |
 | `GET /api/health` | Disponibilidade do banco |
 | `POST /api/auth/login` | Login |
 | `POST /api/auth/logout` | Revogação da sessão |
@@ -126,7 +151,7 @@ Exceto login e healthcheck, as rotas exigem cookie de sessão. Escritas precisam
 | `POST /api/team/import`, `/api/schedule/import`, `/api/budget/import` | Linhas interpretadas do CSV em transação |
 | `POST /api/expenses`, `/api/resources` | JSON ou multipart com campo JSON `data` e arquivos |
 | `POST /api/expenses/:id/documents`, `/api/resources/:id/documents` | Anexos multipart |
-| `PATCH /api/expenses/:id` | Ação `submit` ou `reconcile`, esta com `bankReference` |
+| `PATCH /api/expenses/:id` | `edit` com campos da despesa, `submit` ou `reconcile` com `bankReference`; exige versão |
 | `POST /api/remaps` | Solicitação |
 | `PATCH /api/remaps/:id` | Referência `authorization` recebida do concedente |
 | `GET /api/documents/:id` | Original autenticado |

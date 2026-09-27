@@ -171,6 +171,12 @@ type ScheduleItem = {
   id: string;
   projectId: string;
   item: string;
+  rubric: string;
+  year?: number | null;
+  recurrenceId?: string;
+  installment?: number;
+  installments?: number;
+  monthsCount?: number;
   activity: string;
   value: number;
   month: string;
@@ -186,6 +192,8 @@ type CsvTeamRow = {
 
 type CsvScheduleRow = {
   item: string;
+  year?: number;
+  monthsCount?: number;
   atividade: string;
   valor: number;
   mes: string;
@@ -221,6 +229,7 @@ const baseRubrics = [
   { name: "Transporte", type: "Custeio", approved: 0, executed: 0 },
   { name: "Locomoção", type: "Custeio", approved: 0, executed: 0 },
   { name: "Pessoal / Pró-labore", type: "Custeio", approved: 0, executed: 0 },
+  { name: "Contrapartida", type: "Custeio", approved: 0, executed: 0 },
   { name: "Material Permanente", type: "Capital", approved: 0, executed: 0 },
 ];
 
@@ -289,9 +298,11 @@ function ProgressBar({ value, tone = "green" }: { value: number; tone?: "green" 
 }
 
 type Resource = ResourceEntryDraft & {id: string; projectId: string; documents: DocumentFile[]};
-type Remap = {id: string; projectId: string; from: string; to: string; value: number; reason: string; date: string; status: "Aprovado" | "Aguardando aprovação"; version: number; authorization?: string};
+type RubricOption = {name:string;type:string};
+type RemapDraft = {sourceScheduleId:string;to:string;activity:string;month:string;year:number;value:number;reason:string};
+type Remap = {sourceScheduleId?:string;sourceActivity?:string;activity?:string;month?:string;year?:number;id: string; projectId: string; from: string; to: string; value: number; reason: string; date: string; status: "Aprovado" | "Aguardando aprovação"; version: number; authorization?: string};
 type BudgetRow = CsvBudgetRow & {id: string; projectId: string};
-type State = {user: AppUser; companies: Company[]; projects: Project[]; expenses: Expense[]; team: TeamMember[]; schedule: ScheduleItem[]; links: ProjectLink[]; resources: Resource[]; budget: BudgetRow[]; remaps: Remap[]};
+type State = {rubrics: (RubricOption & {projectId:string})[]; user: AppUser; companies: Company[]; projects: Project[]; expenses: Expense[]; team: TeamMember[]; schedule: ScheduleItem[]; links: ProjectLink[]; resources: Resource[]; budget: BudgetRow[]; remaps: Remap[]};
 const emptyProject: Project = {id:"",companyId:"",name:"Cadastre seu primeiro projeto",code:"",agency:"",period:"",approved:0,counterpart:0,counterpartRealized:0,released:0,executed:0,income:0,version:1};
 const emptyCompany: Company = {id:"",name:"",short:"",cnpj:"",city:"",state:"",responsible:"",email:"",phone:"",version:1};
 export default function Home() {
@@ -321,13 +332,17 @@ function Workspace({initial,onLogout}: {initial: State;onLogout:()=>void}) {
   const [linkModalOpen, setLinkModalOpen] = useState(false);
   const [csvImportOpen, setCsvImportOpen] = useState(false);
   const [budgetRows,setBudgetRows]=useState(initial.budget);
-  const csvImportResult = budgetRows.some(row=>row.projectId===projectId) ? {projectId,fileName:"Orçamento salvo",rows:budgetRows.filter(row=>row.projectId===projectId)} : null;
   const [teamImportOpen, setTeamImportOpen] = useState(false);
   const [scheduleImportOpen, setScheduleImportOpen] = useState(false);
   const [teamMemberCreateOpen, setTeamMemberCreateOpen] = useState(false);
   const [editingTeamMember, setEditingTeamMember] = useState<TeamMember | null>(null);
   const [teamMemberToDelete, setTeamMemberToDelete] = useState<TeamMember | null>(null);
   const [editingScheduleItem, setEditingScheduleItem] = useState<ScheduleItem | null>(null);
+  const [scheduleCreateOpen,setScheduleCreateOpen]=useState(false);
+  const [editingExpense,setEditingExpense]=useState<Expense|null>(null);
+  const [deletingExpense,setDeletingExpense]=useState<Expense|null>(null);
+  const [customRubrics,setCustomRubrics]=useState(initial.rubrics || []);
+  const [rubricCreateOpen,setRubricCreateOpen]=useState(false);
   const [remapOpen, setRemapOpen] = useState(false);
   const [selectedExpense, setSelectedExpense] = useState<Expense | null>(null);
   const [entries, setEntries] = useState(initial.expenses);
@@ -352,11 +367,17 @@ function Workspace({initial,onLogout}: {initial: State;onLogout:()=>void}) {
   const projectRequiredDocuments = projectEntries.reduce((sum, entry) => sum + entry.requiredDocs, 0);
   const projectSentDocuments = projectEntries.reduce((sum, entry) => sum + entry.docs, 0);
   const projectDocumentCompletion = percent(projectSentDocuments, projectRequiredDocuments);
-  const activeRubrics = useMemo(() => baseRubrics.map(rubric=>({ ...rubric,
-    approved: (budgetRows.filter(row=>row.projectId===activeProject.id&&row.elemento===rubric.name).reduce((sum,row)=>sum+Math.round(row.valorTotal*100),0)+remaps.filter(r=>r.projectId===activeProject.id&&r.status==="Aprovado").reduce((sum,r)=>sum+(r.to===rubric.name?Math.round(r.value*100):r.from===rubric.name?-Math.round(r.value*100):0),0))/100,
-    executed: projectEntries.filter(e=>!e.draft&&e.rubric===rubric.name).reduce((sum,e)=>sum+Math.round(e.value*100),0)/100,
-  })),[activeProject.id,budgetRows,remaps,entries]);
-  const refresh=async()=>{const state:State=await api("state");setCompanyList(state.companies);setProjectList(state.projects);setEntries(state.expenses);setProjectLinks(state.links);setTeamMembers(state.team);setScheduleItems(state.schedule);setResources(state.resources);setBudgetRows(state.budget);setRemaps(state.remaps);return state;};
+  const rubricOptions:RubricOption[]=Array.from(new Map([
+    ...baseRubrics,...customRubrics.filter(r=>r.projectId===activeProject.id),
+    ...activeScheduleItems.map(s=>({name:s.rubric || s.item,type:"Custeio"})),
+    ...budgetRows.filter(b=>b.projectId===activeProject.id).map(b=>({name:b.elemento,type:b.elemento==="Material Permanente"?"Capital":"Custeio"})),
+    ...projectEntries.map(e=>({name:e.rubric,type:"Custeio"})),
+  ].map(r=>[r.name,r])).values()).map(r=>({...r,type:customRubrics.find(c=>c.projectId===activeProject.id&&c.name===r.name)?.type || (r.name==="Material Permanente"?"Capital":r.type)}));
+  const activeRubrics = rubricOptions.filter(r=>activeScheduleItems.some(s=>(s.rubric||s.item)===r.name)).map(r=>({...r,
+    approved:(activeScheduleItems.filter(s=>(s.rubric||s.item)===r.name).reduce((sum,s)=>sum+Math.round(s.value*100),0)+remaps.filter(m=>m.projectId===activeProject.id&&m.status==="Aprovado"&&!m.sourceScheduleId).reduce((sum,m)=>sum+(m.to===r.name?Math.round(m.value*100):m.from===r.name?-Math.round(m.value*100):0),0))/100,
+    executed:projectEntries.filter(e=>!e.draft&&e.rubric===r.name).reduce((sum,e)=>sum+Math.round(e.value*100),0)/100,
+  }));
+  const refresh=async()=>{const state:State=await api("state");setCompanyList(state.companies);setProjectList(state.projects);setEntries(state.expenses);setProjectLinks(state.links);setTeamMembers(state.team);setScheduleItems(state.schedule);setResources(state.resources);setBudgetRows(state.budget);setRemaps(state.remaps);setCustomRubrics(state.rubrics || []);return state;};
   const commit=async(action:()=>Promise<unknown>, after:()=>void, message:string)=>{
     if(saving.current)return; saving.current=true;setBusy(true);setSaveError("");
     let saved=false;
@@ -400,12 +421,16 @@ function Workspace({initial,onLogout}: {initial: State;onLogout:()=>void}) {
   const openCsvImport=()=>{setNewEntryOpen(false);setCsvImportOpen(true);};
   const finishCsvImport=(rows:CsvBudgetRow[])=>commit(()=>api("budget/import","POST",{projectId:activeProject.id,rows}),()=>{setCsvImportOpen(false);setView("overview");},"Orçamento importado e salvo.");
   const finishTeamImport=(rows:CsvTeamRow[])=>commit(()=>api("team/import","POST",{projectId:activeProject.id,rows:rows.map(r=>({name:r.nome,role:r.funcao,activity:r.atividade}))}),()=>setTeamImportOpen(false),"Membros adicionados à equipe.");
-  const finishScheduleImport=(rows:CsvScheduleRow[])=>commit(()=>api("schedule/import","POST",{projectId:activeProject.id,rows:rows.map(r=>({item:r.item,activity:r.atividade,value:r.valor,month:r.mes}))}),()=>setScheduleImportOpen(false),"Cronograma importado.");
+  const finishScheduleImport=(rows:CsvScheduleRow[])=>commit(()=>api("schedule/import","POST",{projectId:activeProject.id,rows:rows.map(r=>({rubric:r.item,activity:r.atividade,value:r.valor,month:r.mes,year:r.year,monthsCount:r.monthsCount}))}),()=>setScheduleImportOpen(false),"Cronograma importado.");
   const saveTeamMember=(updated:TeamMember)=>commit(()=>api("team/"+updated.id,"PATCH",updated),()=>setEditingTeamMember(null),"Membro atualizado.");
   const createTeamMember=(draft:Pick<TeamMember,"name"|"role"|"activity">)=>commit(()=>api("team","POST",{...draft,projectId:activeProject.id}),()=>setTeamMemberCreateOpen(false),"Membro adicionado.");
   const deleteTeamMember=(member:TeamMember)=>commit(()=>api("team/"+member.id,"DELETE",{version:member.version}),()=>setTeamMemberToDelete(null),"Membro excluído.");
   const saveScheduleItem=(updated:ScheduleItem)=>commit(()=>api("schedule/"+updated.id,"PATCH",updated),()=>setEditingScheduleItem(null),"Cronograma atualizado.");
-  const saveRemap=(draft:{from:string;to:string;value:number;reason:string})=>commit(()=>api("remaps","POST",{...draft,projectId:activeProject.id}),()=>setRemapOpen(false),"Solicitação registrada. A aprovação deve ser obtida junto ao concedente.");
+  const createScheduleItem=(draft:ScheduleItem)=>commit(()=>api("schedule","POST",{...draft,projectId:activeProject.id}),()=>setScheduleCreateOpen(false),"Previsões adicionadas ao cronograma.");
+  const createRubric=(draft:RubricOption)=>commit(()=>api("rubrics","POST",{...draft,projectId:activeProject.id}),()=>setRubricCreateOpen(false),"Rubrica cadastrada. Planeje o valor no cronograma para utilizá-la.");
+  const editExpense=(draft:ExpenseDraft)=>commit(()=>api("expenses/"+editingExpense!.id,"PATCH",{...draft,action:"edit",version:editingExpense!.version}),()=>{setEditingExpense(null);setSelectedExpense(null);},"Lançamento atualizado.");
+  const deleteExpense=(expense:Expense)=>commit(()=>api("expenses/"+expense.id,"DELETE",{version:expense.version}),()=>{setDeletingExpense(null);setSelectedExpense(null);},"Lançamento excluído e saldos atualizados.");
+  const saveRemap=(draft:RemapDraft)=>commit(()=>api("remaps","POST",{...draft,projectId:activeProject.id}),()=>setRemapOpen(false),"Solicitação registrada. A aprovação deve ser obtida junto ao concedente.");
   const approveRemap=(remap:Remap,authorization:string)=>commit(()=>api("remaps/"+remap.id,"PATCH",{version:remap.version,authorization}),()=>{},"Autorização registrada e orçamento atualizado.");
   const updateExpense=(expense:Expense,action:string,bankReference?:string)=>commit(()=>api("expenses/"+expense.id,"PATCH",{version:expense.version,action,bankReference}),()=>setSelectedExpense(null),"Despesa atualizada.");
   const uploadExpense=(expense:Expense,files:Record<string,File>)=>commit(()=>api("expenses/"+expense.id+"/documents","POST",{},files),()=>{},"Documentos salvos.");
@@ -483,7 +508,7 @@ function Workspace({initial,onLogout}: {initial: State;onLogout:()=>void}) {
             <div><span className="eyebrow">{header.eyebrow}</span><h1>{header.title}</h1><p>{header.subtitle}</p></div>
             <div className="heading-actions">
               {view === "reports" && <button className="secondary-button" onClick={() => window.location.assign(`/api/reports/${activeProject.id}`)}><Download size={17} /> Exportar consolidado</button>}
-              {(view === "overview" || view === "entries") && <button className="secondary-button" onClick={openCsvImport}><FileSpreadsheet size={17} /> Importar CSV</button>}
+              {(view === "overview") && <button className="secondary-button" onClick={openCsvImport}><FileSpreadsheet size={17} /> Importar CSV</button>}
               {view === "companies" ? (
                 <>
                   <button className="secondary-button" onClick={() => startProjectCreation(profileCompanyId)}><Rocket size={17} /> Novo projeto</button>
@@ -495,7 +520,7 @@ function Workspace({initial,onLogout}: {initial: State;onLogout:()=>void}) {
                   <button className="primary-button" onClick={() => setTeamMemberCreateOpen(true)}><Plus size={18} /> Adicionar membro</button>
                 </>
               ) : view === "schedule" ? (
-                <button className="primary-button" onClick={() => setScheduleImportOpen(true)}><FileSpreadsheet size={18} /> Importar cronograma</button>
+                <><button className="secondary-button" onClick={() => setScheduleImportOpen(true)}><FileSpreadsheet size={18} /> Importar CSV</button><button className="primary-button" onClick={()=>setScheduleCreateOpen(true)}><Plus size={18}/> Adicionar previsão</button></>
               ) : view === "resources" ? (
                 <button className="primary-button" onClick={() => setResourceEntryOpen(true)}><ArrowDownToLine size={18} /> Lançar recurso</button>
               ) : view === "remaps" ? (
@@ -513,8 +538,8 @@ function Workspace({initial,onLogout}: {initial: State;onLogout:()=>void}) {
           {view === "overview" && <Overview project={activeProject} rubrics={activeRubrics} entries={projectEntries} navigate={navigate} openEntry={setSelectedExpense} newEntry={() => setNewEntryOpen(true)} importCsv={openCsvImport} />}
           {view === "companies" && <CompaniesView companies={companyList} projects={projectList} selectedCompanyId={profileCompanyId} activeProjectId={projectId} onSelectCompany={setProfileCompanyId} onNewCompany={() => setCompanyModalOpen(true)} onNewProject={startProjectCreation} onSwitchProject={switchProject} />}
           {view === "team" && <TeamView project={activeProject} members={activeTeamMembers} onImport={() => setTeamImportOpen(true)} onAdd={() => setTeamMemberCreateOpen(true)} onEdit={setEditingTeamMember} onDelete={setTeamMemberToDelete} />}
-          {view === "schedule" && <ScheduleView project={activeProject} items={activeScheduleItems} onImport={() => setScheduleImportOpen(true)} onEdit={setEditingScheduleItem} />}
-          {view === "entries" && <Entries projectId={activeProject.id} entries={projectEntries} openEntry={setSelectedExpense} newEntry={() => setNewEntryOpen(true)} importCsv={openCsvImport} csvImport={csvImportResult?.projectId === activeProject.id ? csvImportResult : null} />}
+          {view === "schedule" && <ScheduleView onAdd={()=>setScheduleCreateOpen(true)} project={activeProject} items={activeScheduleItems} onImport={() => setScheduleImportOpen(true)} onEdit={setEditingScheduleItem} />}
+          {view === "entries" && <Entries projectId={activeProject.id} entries={projectEntries} openEntry={setSelectedExpense} newEntry={() => setNewEntryOpen(true)} rubrics={rubricOptions} onAddRubric={()=>setRubricCreateOpen(true)} onEdit={setEditingExpense} onDelete={setDeletingExpense} />}
           {view === "resources" && <Resources project={activeProject} resources={resources.filter(r=>r.projectId===activeProject.id)} onAdd={()=>setResourceEntryOpen(true)} />}
           {view === "reconciliation" && <Reconciliation project={activeProject} entries={projectEntries} resources={resources.filter(r=>r.projectId===activeProject.id)} />}
           {view === "remaps" && <Remaps project={activeProject} remaps={remaps.filter(r=>r.projectId===activeProject.id)} onApprove={approveRemap} admin={initial.user.role==="admin"} openModal={() => setRemapOpen(true)} />}
@@ -524,7 +549,7 @@ function Workspace({initial,onLogout}: {initial: State;onLogout:()=>void}) {
         </div>
       </main>
 
-      {newEntryOpen && <NewEntryModal onClose={() => setNewEntryOpen(false)} onSave={addEntry} onImportCsv={openCsvImport} showToast={showToast} />}
+      {newEntryOpen && <NewEntryModal rubrics={rubricOptions} onAddRubric={()=>setRubricCreateOpen(true)} onClose={() => setNewEntryOpen(false)} onSave={addEntry} showToast={showToast} />}
       {resourceEntryOpen && <ResourceEntryModal project={activeProject} onClose={() => setResourceEntryOpen(false)} onSave={addResourceEntry} />}
       {linkModalOpen && <ProjectLinkModal project={activeProject} onClose={() => setLinkModalOpen(false)} onSave={addProjectLink} />}
       {companyModalOpen && <CompanyModal onClose={() => setCompanyModalOpen(false)} onSave={createCompany} />}
@@ -535,9 +560,13 @@ function Workspace({initial,onLogout}: {initial: State;onLogout:()=>void}) {
       {teamMemberCreateOpen && <TeamMemberCreateModal project={activeProject} onClose={() => setTeamMemberCreateOpen(false)} onSave={createTeamMember} />}
       {editingTeamMember && <TeamMemberEditModal member={editingTeamMember} onClose={() => setEditingTeamMember(null)} onSave={saveTeamMember} />}
       {teamMemberToDelete && <DeleteTeamMemberModal member={teamMemberToDelete} onClose={() => setTeamMemberToDelete(null)} onConfirm={deleteTeamMember} />}
-      {editingScheduleItem && <ScheduleItemEditModal item={editingScheduleItem} onClose={() => setEditingScheduleItem(null)} onSave={saveScheduleItem} />}
-      {remapOpen && <RemapModal onClose={() => setRemapOpen(false)} onSave={saveRemap} />}
-      {selectedExpense && <ExpenseModal expense={entries.find(e=>e.id===selectedExpense.id)||selectedExpense} onClose={() => setSelectedExpense(null)} onUpload={uploadExpense} onUpdate={updateExpense} admin={initial.user.role==="admin"} />}
+      {rubricCreateOpen && <RubricModal onClose={()=>setRubricCreateOpen(false)} onSave={createRubric}/>}
+      {editingExpense && <NewEntryModal initial={editingExpense} rubrics={rubricOptions} onAddRubric={()=>setRubricCreateOpen(true)} onClose={()=>setEditingExpense(null)} onSave={editExpense} showToast={showToast}/>}
+      {deletingExpense && <DeleteExpenseModal expense={deletingExpense} onClose={()=>setDeletingExpense(null)} onConfirm={()=>deleteExpense(deletingExpense)}/>}
+      {scheduleCreateOpen && <ScheduleItemEditModal project={activeProject} rubrics={rubricOptions} onAddRubric={()=>setRubricCreateOpen(true)} onClose={()=>setScheduleCreateOpen(false)} onSave={createScheduleItem}/>}
+      {editingScheduleItem && <ScheduleItemEditModal project={activeProject} rubrics={rubricOptions} onAddRubric={()=>setRubricCreateOpen(true)} item={editingScheduleItem} onClose={() => setEditingScheduleItem(null)} onSave={saveScheduleItem} />}
+      {remapOpen && <RemapModal items={activeScheduleItems} project={activeProject} rubrics={rubricOptions} onAddRubric={()=>setRubricCreateOpen(true)} onClose={() => setRemapOpen(false)} onSave={saveRemap} />}
+      {selectedExpense && !editingExpense && !deletingExpense && <ExpenseModal onEdit={setEditingExpense} onDelete={setDeletingExpense} expense={entries.find(e=>e.id===selectedExpense.id)||selectedExpense} onClose={() => setSelectedExpense(null)} onUpload={uploadExpense} onUpdate={updateExpense} admin={initial.user.role==="admin"} />}
       {toast && <div className="toast" role="status"><CheckCircle2 size={19} /><span>{toast}</span><button aria-label="Fechar aviso" onClick={() => setToast("")}><X size={16} /></button></div>}
     </div>
   );
@@ -798,8 +827,8 @@ function Overview({
       ) : (
         <section className="notice-banner onboarding-notice">
           <div className="notice-icon"><Rocket size={19} /></div>
-          <div><strong>Projeto criado — prepare o orçamento inicial</strong><span>Importe o CSV de rubricas para começar a acompanhar a execução deste projeto.</span></div>
-          <button onClick={importCsv}>Importar rubricas <ArrowRight size={16} /></button>
+          <div><strong>Organize o planejamento do projeto</strong><span>Cadastre as rubricas e os valores previstos no cronograma.</span></div>
+          <button onClick={()=>navigate("schedule")}>Abrir cronograma <ArrowRight size={16} /></button>
         </section>
       )}
 
@@ -831,7 +860,7 @@ function Overview({
       <section className="overview-grid">
         <article className="panel rubric-panel">
           <div className="panel-header">
-            <div><h2>Execução por rubrica</h2><p>Percentual utilizado sobre o orçamento vigente</p></div>
+            <div><h2>Execução por rubrica</h2><p>Percentual utilizado sobre os valores previstos no cronograma</p></div>
             <button className="text-button" onClick={() => navigate("entries")}>Ver lançamentos <ArrowRight size={15} /></button>
           </div>
           <div className="segmented-control">
@@ -895,7 +924,7 @@ function Overview({
   );
 }
 
-function ExpenseTable({ entries, onOpen }: { entries: Expense[]; onOpen: (expense: Expense) => void }) {
+function ExpenseTable({ entries, onOpen, onEdit, onDelete }: { entries: Expense[]; onOpen: (expense: Expense) => void; onEdit?:(e:Expense)=>void; onDelete?:(e:Expense)=>void }) {
   return (
     <div className="table-wrap">
       <table className="data-table">
@@ -906,10 +935,10 @@ function ExpenseTable({ entries, onOpen }: { entries: Expense[]; onOpen: (expens
               <td><strong>{entry.date}</strong><span>{entry.id}</span></td>
               <td><strong>{entry.supplier}</strong><span>{entry.description}</span></td>
               <td><span className="category-pill">{entry.rubric}</span></td>
-              <td><span className={entry.docs === entry.requiredDocs ? "docs-count complete" : "docs-count incomplete"}>{entry.docs === entry.requiredDocs ? <FileCheck2 size={15} /> : <AlertCircle size={15} />}{entry.docs}/{entry.requiredDocs} anexos</span></td>
+              <td><span className={entry.docs === entry.requiredDocs ? "docs-count complete" : "docs-count incomplete"}>{entry.docs === entry.requiredDocs ? <FileCheck2 size={15} /> : <AlertCircle size={15} />}{entry.docs}/{entry.requiredDocs} anexos</span>{entry.docs<entry.requiredDocs&&<span className="warning-text">Documentos pendentes</span>}</td>
               <td className="value-cell">{money(entry.value)}</td>
               <td><StatusBadge status={entry.status} /></td>
-              <td><button className="row-button" aria-label={"Abrir " + entry.id}><ChevronRight size={17} /></button></td>
+              <td><div className="expense-actions"><button className="row-button" aria-label={"Abrir " + entry.id}><ChevronRight size={17} /></button>{onEdit&&<button className="secondary-button small" onClick={e=>{e.stopPropagation();onEdit(entry);}}><Pencil size={14}/> Editar</button>}{onDelete&&<button className="delete-row-button" onClick={e=>{e.stopPropagation();onDelete(entry);}}><Trash2 size={14}/> Excluir</button>}</div></td>
             </tr>
           ))}
         </tbody>
@@ -922,15 +951,13 @@ function Entries({
   entries,
   openEntry,
   newEntry,
-  importCsv,
-  csvImport,
+  rubrics, onAddRubric, onEdit, onDelete,
   projectId,
 }: {
   entries: Expense[];
   openEntry: (expense: Expense) => void;
   newEntry: () => void;
-  importCsv: () => void;
-  csvImport: CsvImportResult | null;
+  rubrics:RubricOption[]; onAddRubric:()=>void; onEdit:(e:Expense)=>void; onDelete:(e:Expense)=>void;
   projectId: string;
 }) {
   const [query, setQuery] = useState("");
@@ -941,26 +968,9 @@ function Entries({
     return matchesQuery && (status === "Todos" || entry.status === status) && (rubricFilter === "Todas as rubricas" || entry.rubric === rubricFilter) && (!start || entry.date >= start) && (!end || entry.date <= end);
   });
   const total = filtered.filter(e=>!e.draft).reduce((sum, entry) => sum + Math.round(entry.value*100), 0)/100;
-  const importedTotal = csvImport?.rows.reduce((sum, row) => sum + row.valorTotal, 0) || 0;
-  const importedElements = csvImport ? Array.from(new Set(csvImport.rows.map((row) => row.elemento))) : [];
   return (
     <>
-      {csvImport && (
-        <section className="csv-imported-banner">
-          <div className="csv-imported-icon"><FileSpreadsheet size={22} /></div>
-          <div className="csv-imported-copy">
-            <span>Importação concluída</span>
-            <strong>{csvImport.fileName}</strong>
-            <p>{csvImport.rows.length} itens distribuídos em {importedElements.length} rubricas foram preenchidos automaticamente.</p>
-          </div>
-          <div className="csv-imported-elements">
-            {importedElements.slice(0, 3).map((element) => <span key={element}>{element}</span>)}
-            {importedElements.length > 3 && <span>+{importedElements.length - 3}</span>}
-          </div>
-          <div className="csv-imported-total"><span>Valor importado</span><strong>{money(importedTotal)}</strong></div>
-          <button className="secondary-button small" onClick={importCsv}><RefreshCw size={15} /> Importar outro</button>
-        </section>
-      )}
+      <div className="expense-actions" style={{marginBottom:16}}><button className="secondary-button" onClick={onAddRubric}><Plus size={16}/> Adicionar rubrica</button></div>
       <section className="summary-strip">
         <div><span>Despesas no filtro (sem rascunhos)</span><strong>{money(total)}</strong></div>
         <div><span>Lançamentos conciliados</span><strong>{entries.filter((entry) => entry.status === "Conciliado").length}</strong><small>de {entries.length} registros</small></div>
@@ -971,11 +981,11 @@ function Entries({
         <div className="toolbar">
           <div className="search-field"><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar por fornecedor, ID ou rubrica" /></div>
           <select value={status} onChange={(event) => setStatus(event.target.value)}><option>Todos</option><option>Conciliado</option><option>Pendente</option><option>Em análise</option></select>
-          <select aria-label="Filtrar rubrica" value={rubricFilter} onChange={e=>setRubricFilter(e.target.value)}><option>Todas as rubricas</option>{baseRubrics.map((rubric) => <option key={rubric.name}>{rubric.name}</option>)}</select>
+          <select aria-label="Filtrar rubrica" value={rubricFilter} onChange={e=>setRubricFilter(e.target.value)}><option>Todas as rubricas</option>{rubrics.map((rubric) => <option key={rubric.name}>{rubric.name}</option>)}</select>
           <input aria-label="Data inicial" type="date" value={start} onChange={e=>setStart(e.target.value)}/><input aria-label="Data final" type="date" value={end} onChange={e=>setEnd(e.target.value)}/>
           <a className="icon-button" aria-label="Exportar todos os lançamentos" href={"/api/reports/"+projectId}><Download size={17}/></a>
         </div>
-        <ExpenseTable entries={filtered} onOpen={openEntry} />
+        <ExpenseTable entries={filtered} onOpen={openEntry} onEdit={onEdit} onDelete={onDelete} />
         {filtered.length === 0 && <div className="empty-state"><Search size={28} /><strong>Nenhum lançamento encontrado</strong><p>Altere os filtros ou registre uma nova despesa.</p><button className="primary-button" onClick={newEntry}><Plus size={17} /> Novo lançamento</button></div>}
         <div className="table-pagination"><span>Exibindo {filtered.length} de {entries.length} lançamentos</span><div><button disabled><ChevronLeft size={16} /></button><button className="active">1</button><button disabled><ChevronRight size={16} /></button></div></div>
       </section>
@@ -996,7 +1006,7 @@ function Reconciliation({project,entries,resources}:{project:Project;entries:Exp
 
 function Remaps({project,remaps,openModal,onApprove,admin}:{project:Project;remaps:Remap[];openModal:()=>void;onApprove:(r:Remap,authorization:string)=>void;admin:boolean}) {
  const [authorization,setAuthorization]=useState<Record<string,string>>({});
- return <><section className="summary-strip"><div><span>Subvenção aprovada</span><strong>{money(project.approved)}</strong></div><div><span>Remanejamentos aprovados</span><strong>{money(remaps.filter(r=>r.status==="Aprovado").reduce((s,r)=>s+r.value,0))}</strong></div></section><section className="panel"><div className="panel-header"><h2>Histórico de remanejamentos</h2><button className="primary-button" onClick={openModal}>Nova solicitação</button></div><div className="remap-list">{remaps.map(r=><article className="remap-card" key={r.id}><div className="remap-card-top"><StatusBadge status={r.status}/><strong>{money(r.value)}</strong></div><div className="remap-flow"><div><small>Origem</small><strong>{r.from}</strong></div><ArrowRight/><div><small>Destino</small><strong>{r.to}</strong></div></div><p>{r.reason}</p>{r.authorization&&<p>Autorização do concedente: {r.authorization}</p>}{admin&&r.status!=="Aprovado"&&<div className="form-grid"><label className="field full"><span>Referência da autorização do concedente</span><input value={authorization[r.id]||""} onChange={e=>setAuthorization({...authorization,[r.id]:e.target.value})}/></label><button className="secondary-button" disabled={!authorization[r.id]?.trim()} onClick={()=>onApprove(r,authorization[r.id])}>Registrar aprovação recebida</button></div>}</article>)}{!remaps.length&&<div className="empty-state compact"><p>Nenhuma solicitação registrada.</p></div>}</div></section></>;
+ return <><section className="summary-strip"><div><span>Subvenção aprovada</span><strong>{money(project.approved)}</strong></div><div><span>Remanejamentos aprovados</span><strong>{money(remaps.filter(r=>r.status==="Aprovado").reduce((s,r)=>s+r.value,0))}</strong></div></section><section className="panel"><div className="panel-header"><h2>Histórico de remanejamentos</h2><button className="primary-button" onClick={openModal}>Nova solicitação</button></div><div className="remap-list">{remaps.map(r=><article className="remap-card" key={r.id}><div className="remap-card-top"><StatusBadge status={r.status}/><strong>{money(r.value)}</strong></div><div className="remap-flow"><div><small>Origem</small><strong>{r.from}</strong>{r.sourceActivity&&<p>{r.sourceActivity}</p>}</div><ArrowRight/><div><small>Destino</small><strong>{r.to}</strong>{r.activity&&<p>{r.activity} · {r.month}/{r.year}</p>}</div></div><p>{r.reason}</p>{r.authorization&&<p>Autorização do concedente: {r.authorization}</p>}{admin&&r.status!=="Aprovado"&&<div className="form-grid"><label className="field full"><span>Referência da autorização do concedente</span><input value={authorization[r.id]||""} onChange={e=>setAuthorization({...authorization,[r.id]:e.target.value})}/></label><button className="secondary-button" disabled={!authorization[r.id]?.trim()} onClick={()=>onApprove(r,authorization[r.id])}>Registrar aprovação recebida</button></div>}</article>)}{!remaps.length&&<div className="empty-state compact"><p>Nenhuma solicitação registrada.</p></div>}</div></section></>;
 }
 
 function Documents({ entries, openEntry }: { entries: Expense[]; openEntry: (expense: Expense) => void }) {
@@ -1155,11 +1165,13 @@ function ScheduleView({
   project,
   items,
   onImport,
+  onAdd,
   onEdit,
 }: {
   project: Project;
   items: ScheduleItem[];
   onImport: () => void;
+  onAdd: () => void;
   onEdit: (item: ScheduleItem) => void;
 }) {
   const [statusFilter, setStatusFilter] = useState<"Todas" | ScheduleStatus>("Todas");
@@ -1175,7 +1187,7 @@ function ScheduleView({
   const statusPriority: Record<ScheduleStatus, number> = { "Atrasada": 0, "Em andamento": 1, "Não iniciada": 2, "Concluída": 3 };
   const visibleItems = [...items]
     .filter((item) => statusFilter === "Todas" || item.status === statusFilter)
-    .sort((left, right) => statusPriority[left.status] - statusPriority[right.status] || projectMonths.indexOf(left.month) - projectMonths.indexOf(right.month));
+    .sort((left, right) => statusPriority[left.status] - statusPriority[right.status] || ((left.year||0)*12+projectMonths.indexOf(left.month)) - ((right.year||0)*12+projectMonths.indexOf(right.month)));
   const filterOptions: Array<"Todas" | ScheduleStatus> = ["Todas", "Atrasada", "Em andamento", "Não iniciada", "Concluída"];
 
   return (
@@ -1205,14 +1217,14 @@ function ScheduleView({
             </div>
             <div className="table-wrap">
               <table className="data-table management-table schedule-table">
-                <thead><tr><th>Item</th><th>Atividade</th><th>Valor</th><th>Mês</th><th>Status</th><th aria-label="Ações" /></tr></thead>
+                <thead><tr><th>Rubrica</th><th>Atividade</th><th>Valor</th><th>Mês</th><th>Status</th><th aria-label="Ações" /></tr></thead>
                 <tbody>
                   {visibleItems.map((item) => (
                     <tr key={item.id} className={`schedule-row status-${normalizeCsvText(item.status).replace(/\s+/g, "-")}`}>
-                      <td><strong className="schedule-item-title">{item.item}</strong></td>
+                      <td><strong className="schedule-item-title">{item.rubric||item.item}</strong>{item.recurrenceId&&<span>Mensal · parcela {item.installment}/{item.installments}</span>}</td>
                       <td><p className="management-activity schedule-activity">{item.activity}</p></td>
                       <td><strong className="schedule-value">{money(item.value)}</strong></td>
-                      <td><span className="schedule-month"><CalendarDays size={14} /> {item.month}</span></td>
+                      <td><span className="schedule-month"><CalendarDays size={14} /> {item.month}{item.year?` / ${item.year}`:""}</span></td>
                       <td><ScheduleStatusBadge status={item.status} /></td>
                       <td><button className="secondary-button small edit-row-button" onClick={() => onEdit(item)}><Pencil size={14} /> Editar</button></td>
                     </tr>
@@ -1224,7 +1236,7 @@ function ScheduleView({
             </div>
           </>
         ) : (
-          <div className="empty-state management-empty"><CalendarDays size={31} /><strong>Nenhum item no cronograma</strong><p>Importe um CSV com item, atividade, valor e mês para preencher o planejamento.</p><button className="primary-button small" onClick={onImport}><FileSpreadsheet size={15} /> Importar cronograma</button></div>
+          <div className="empty-state management-empty"><CalendarDays size={31} /><strong>Nenhum item no cronograma</strong><p>Adicione uma previsão ou importe um CSV com rubrica, atividade, valor e mês.</p><button className="primary-button small" onClick={onAdd}><Plus size={15} /> Adicionar previsão</button></div>
         )}
       </section>
     </>
@@ -1312,10 +1324,10 @@ function parseProjectCsv(text: string, kind: "team" | "schedule") {
   const lines: string[][] = csvRecords(text);
   if (lines.length < 2) return { rows: [], error: "O arquivo precisa ter um cabeçalho e pelo menos uma linha de dados." };
 
-  const headers = lines[0].map(normalizeCsvHeader);
+  const headers = lines[0].map(normalizeCsvHeader).map(h=>kind==="schedule"&&h==="item"?"rubrica":h);
   const required = kind === "team"
     ? [{ key: "nome", label: "nome" }, { key: "funcao", label: "função" }, { key: "atividade", label: "atividade" }]
-    : [{ key: "item", label: "item" }, { key: "atividade", label: "atividade" }, { key: "valor", label: "valor" }, { key: "mes", label: "mês" }];
+    : [{ key: "rubrica", label: "rubrica" }, { key: "atividade", label: "atividade" }, { key: "valor", label: "valor" }, { key: "mes", label: "mês" }];
   const missing = required.filter((column) => !headers.includes(column.key));
   if (missing.length) return { rows: [], error: "Colunas ausentes: " + missing.map((column) => column.label).join(", ") + "." };
 
@@ -1342,13 +1354,19 @@ function parseProjectCsv(text: string, kind: "team" | "schedule") {
     const rawMonth = cells[indexOf("mes")] || "";
     const recognizedMonth = projectMonths.find((month) => normalizeCsvText(month) === normalizeCsvText(rawMonth));
     const row: CsvScheduleRow = {
-      item: cells[indexOf("item")] || "",
+      item: cells[indexOf("rubrica")] || "",
+      year:headers.includes("ano")&&cells[indexOf("ano")]?Number(cells[indexOf("ano")]):undefined,
+      monthsCount:headers.includes("meses")&&cells[indexOf("meses")]?Number(cells[indexOf("meses")]):1,
       atividade: cells[indexOf("atividade")] || "",
       valor: parseBrazilianNumber(cells[indexOf("valor")] || ""),
       mes: recognizedMonth || rawMonth,
       issues: [],
     };
-    if (!row.item) row.issues.push("Item não informado");
+    if(["pro-labore","pro labore","prolabore"].includes(normalizeCsvText(row.item)))row.item="Pessoal / Pró-labore";
+    if (!row.item) row.issues.push("Rubrica não informada");
+    if(row.year!==undefined&&(!Number.isInteger(row.year)||row.year<2000||row.year>2200))row.issues.push("Ano inválido");
+    if(!Number.isInteger(row.monthsCount)||row.monthsCount!<1||row.monthsCount!>60)row.issues.push("Quantidade de meses inválida");
+    if(row.monthsCount!>1&&normalizeCsvText(row.item)!==normalizeCsvText("Pessoal / Pró-labore"))row.issues.push("Use meses apenas para Pessoal / Pró-labore");
     if (!row.atividade) row.issues.push("Atividade não informada");
     if (!Number.isFinite(row.valor) || row.valor <= 0) row.issues.push("Valor inválido");
     if (!row.mes) row.issues.push("Mês não informado");
@@ -1365,9 +1383,9 @@ const sampleTeamRows: CsvTeamRow[] = [
 ];
 
 const sampleScheduleRows: CsvScheduleRow[] = [
-  { item: "Planejamento técnico do projeto", atividade: "Levantar os requisitos, definir as especificações técnicas e consolidar o plano de execução do projeto.", valor: 42000, mes: "Janeiro", issues: [] },
-  { item: "Aquisição de insumos", atividade: "Selecionar fornecedores, realizar as compras previstas e organizar os materiais necessários para os testes.", valor: 86500, mes: "Fevereiro", issues: [] },
-  { item: "Desenvolvimento da plataforma web", atividade: "Projetar, programar e testar os módulos da plataforma previstos no escopo aprovado.", valor: 148000, mes: "Março", issues: [] },
+  { item: "Consultoria", atividade: "Levantar os requisitos, definir as especificações técnicas e consolidar o plano de execução do projeto.", valor: 42000, mes: "Janeiro", issues: [] },
+  { item: "Material de Consumo", atividade: "Selecionar fornecedores, realizar as compras previstas e organizar os materiais necessários para os testes.", valor: 86500, mes: "Fevereiro", issues: [] },
+  { item: "Serviços de Terceiros - PJ", atividade: "Projetar, programar e testar os módulos da plataforma previstos no escopo aprovado.", valor: 148000, mes: "Março", issues: [] },
 ];
 
 const sampleCsvRows: CsvBudgetRow[] = [
@@ -1462,9 +1480,9 @@ function OperationalCsvImportModal({
           "Rafael Moura;Pesquisador;Execução dos testes e validação dos resultados",
         ].join("\n")
       : [
-          "item;atividade;valor;mês",
-          "Planejamento técnico do projeto;Levantar os requisitos e consolidar as especificações técnicas;42.000,00;Janeiro",
-          "Desenvolvimento da plataforma web;Projetar programar e testar os módulos previstos no projeto;148.000,00;Março",
+          "rubrica;atividade;valor;mês;ano;meses",
+          "Consultoria;Levantar os requisitos e consolidar as especificações técnicas;2.000,00;Janeiro;2026;1",
+          "Pessoal / Pró-labore;Coordenação mensal do projeto;1.500,00;Março;2026;6",
         ].join("\n");
     const url = URL.createObjectURL(new Blob(["\uFEFF" + content], { type: "text/csv;charset=utf-8" }));
     const anchor = document.createElement("a");
@@ -1478,8 +1496,8 @@ function OperationalCsvImportModal({
   const teamRows = rows as CsvTeamRow[];
   const scheduleRows = rows as CsvScheduleRow[];
   const roleCount = isTeam ? new Set(teamRows.map((row) => normalizeCsvText(row.funcao))).size : 0;
-  const scheduleTotal = !isTeam ? scheduleRows.reduce((sum, row) => sum + (Number.isFinite(row.valor) ? row.valor : 0), 0) : 0;
-  const columns = isTeam ? ["nome", "função", "atividade"] : ["item (nome da entrega)", "atividade (descrição completa)", "valor", "mês"];
+  const scheduleTotal = !isTeam ? scheduleRows.reduce((sum, row) => sum + (Number.isFinite(row.valor) ? row.valor * (row.monthsCount || 1) : 0), 0) : 0;
+  const columns = isTeam ? ["nome", "função", "atividade"] : ["rubrica", "atividade (descrição completa)", "valor", "mês"];
 
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
@@ -1494,7 +1512,7 @@ function OperationalCsvImportModal({
           <div className="modal-body csv-modal-body">
             <div className="csv-intro">
               <div className="csv-intro-icon">{isTeam ? <Users size={24} /> : <CalendarDays size={24} />}</div>
-              <div><strong>{isTeam ? "Cadastre toda a equipe de uma só vez" : "Preencha o planejamento em poucos passos"}</strong><p>{isTeam ? "O sistema valida as colunas e mostra uma prévia antes de preencher a equipe do projeto." : "Use item para o nome da entrega, atividade para a descrição completa e mês para Janeiro, Fevereiro e assim por diante."}</p></div>
+              <div><strong>{isTeam ? "Cadastre toda a equipe de uma só vez" : "Preencha o planejamento em poucos passos"}</strong><p>{isTeam ? "O sistema valida as colunas e mostra uma prévia antes de preencher a equipe do projeto." : "Use rubrica, atividade, valor e mês por extenso. As colunas opcionais ano e meses definem o início e a quantidade de parcelas do pró-labore. Valor é o valor de cada mês; sem meses, uma linha representa uma única previsão."}</p></div>
             </div>
             <button
               className={`csv-dropzone ${dragActive ? "dragging" : ""}`}
@@ -1534,8 +1552,8 @@ function OperationalCsvImportModal({
                 </table>
               ) : (
                 <table className="csv-preview-table operational-preview-table">
-                  <thead><tr><th>#</th><th>Item</th><th>Atividade</th><th>Valor</th><th>Mês</th><th /></tr></thead>
-                  <tbody>{scheduleRows.map((row, index) => <tr key={`${row.item}-${index}`} className={row.issues.length ? "has-issue" : ""}><td>{index + 1}</td><td><strong>{row.item || "—"}</strong></td><td><span className="csv-description">{row.atividade || "—"}</span></td><td><strong>{Number.isFinite(row.valor) ? money(row.valor) : "—"}</strong></td><td>{row.mes || "—"}</td><td>{row.issues.length ? <span className="csv-row-issue" title={row.issues.join(", ")}><AlertCircle size={15} /></span> : <CheckCircle2 className="csv-row-valid" size={15} />}</td></tr>)}</tbody>
+                  <thead><tr><th>#</th><th>Rubrica</th><th>Atividade</th><th>Valor</th><th>Mês</th><th /></tr></thead>
+                  <tbody>{scheduleRows.map((row, index) => <tr key={`${row.item}-${index}`} className={row.issues.length ? "has-issue" : ""}><td>{index + 1}</td><td><strong>{row.item || "—"}</strong></td><td><span className="csv-description">{row.atividade || "—"}</span></td><td><strong>{Number.isFinite(row.valor) ? money(row.valor) : "—"}</strong></td><td>{row.mes || "—"}{row.year?` / ${row.year}`:""}{(row.monthsCount||1)>1&&<small>{row.monthsCount} parcelas mensais</small>}</td><td>{row.issues.length ? <span className="csv-row-issue" title={row.issues.join(", ")}><AlertCircle size={15} /></span> : <CheckCircle2 className="csv-row-valid" size={15} />}</td></tr>)}</tbody>
                 </table>
               )}
             </div>
@@ -1632,36 +1650,33 @@ function TeamMemberEditModal({
   );
 }
 
-function ScheduleItemEditModal({
-  item,
-  onClose,
-  onSave,
-}: {
-  item: ScheduleItem;
-  onClose: () => void;
-  onSave: (item: ScheduleItem) => void;
-}) {
-  const [itemTitle, setItemTitle] = useState(item.item);
-  const [activity, setActivity] = useState(item.activity);
-  const [value, setValue] = useState(String(item.value));
-  const [month, setMonth] = useState(item.month);
-  const [status, setStatus] = useState<ScheduleStatus>(item.status);
-
-  return (
-    <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <form className="modal edit-management-modal" role="dialog" aria-modal="true" aria-labelledby="edit-schedule-title" onSubmit={(event) => { event.preventDefault(); onSave({ ...item, item: itemTitle.trim(), activity: activity.trim(), value: Number(value), month, status }); }}>
-        <div className="modal-header"><div><span>Cronograma do projeto</span><h2 id="edit-schedule-title">Editar item</h2></div><button type="button" className="icon-button" onClick={onClose} aria-label="Fechar"><X size={19} /></button></div>
-        <div className="modal-body form-grid management-edit-form">
-          <label className="field full"><span>Item do cronograma</span><input value={itemTitle} onChange={(event) => setItemTitle(event.target.value)} placeholder="Ex.: Desenvolvimento da plataforma web" required /><small>Informe o nome da entrega ou etapa principal.</small></label>
-          <label className="field full"><span>Descrição completa da atividade</span><textarea rows={4} value={activity} onChange={(event) => setActivity(event.target.value)} placeholder="Descreva o que será executado nesta etapa." required /></label>
-          <label className="field"><span>Mês</span><select value={month} onChange={(event) => setMonth(event.target.value)} required>{projectMonths.map((projectMonth) => <option key={projectMonth} value={projectMonth}>{projectMonth}</option>)}</select></label>
-          <label className="field"><span>Status</span><select value={status} onChange={(event) => setStatus(event.target.value as ScheduleStatus)} required>{scheduleStatuses.map((scheduleStatus) => <option key={scheduleStatus} value={scheduleStatus}>{scheduleStatus}</option>)}</select></label>
-          <label className="field full"><span>Valor</span><input type="number" min="0.01" step="0.01" value={value} onChange={(event) => setValue(event.target.value)} required /></label>
-        </div>
-        <div className="modal-footer"><button type="button" className="secondary-button" onClick={onClose}>Cancelar</button><button type="submit" className="primary-button"><Check size={17} /> Salvar alterações</button></div>
-      </form>
-    </div>
-  );
+function RubricPicker({value,onChange,rubrics,onAdd}:{value:string;onChange:(value:string)=>void;rubrics:RubricOption[];onAdd:()=>void}) {
+  return <div className="rubric-picker"><select aria-label="Rubrica" required value={value} onChange={e=>onChange(e.target.value)}><option value="">Selecione uma rubrica</option>{rubrics.map(r=><option key={r.name} value={r.name}>{r.name}</option>)}</select><button type="button" className="text-button" onClick={onAdd}><Plus size={14}/> Adicionar nova rubrica</button></div>;
+}
+function RubricModal({onClose,onSave}:{onClose:()=>void;onSave:(r:RubricOption)=>void}) {
+  const [name,setName]=useState(""),[type,setType]=useState("Custeio");
+  return <div className="modal-backdrop" style={{zIndex:2500}}><form className="modal" role="dialog" aria-modal="true" aria-label="Adicionar rubrica" onSubmit={e=>{e.preventDefault();onSave({name:name.trim(),type});}}><div className="modal-header"><h2>Adicionar rubrica</h2><button type="button" className="icon-button" onClick={onClose} aria-label="Fechar"><X/></button></div><div className="modal-body form-grid"><label className="field full"><span>Nome da rubrica</span><input autoFocus required maxLength={120} value={name} onChange={e=>setName(e.target.value)}/></label><label className="field full"><span>Tipo</span><select value={type} onChange={e=>setType(e.target.value)}><option>Custeio</option><option>Capital</option></select></label><p className="full">A rubrica ficará disponível neste projeto. Cadastre uma previsão no cronograma para definir seu saldo.</p></div><div className="modal-footer"><button type="button" className="secondary-button" onClick={onClose}>Cancelar</button><button className="primary-button" disabled={!name.trim()}>Cadastrar rubrica</button></div></form></div>;
+}
+function ScheduleItemEditModal({item,project,rubrics,onAddRubric,onClose,onSave}:{item?:ScheduleItem;project:Project;rubrics:RubricOption[];onAddRubric:()=>void;onClose:()=>void;onSave:(item:ScheduleItem)=>void}) {
+  const start=project.startDate ? new Date(project.startDate+"T12:00:00") : new Date();
+  const [rubric,setRubric]=useState(item?.rubric || item?.item || "");
+  const [activity,setActivity]=useState(item?.activity || ""),[value,setValue]=useState(item?String(item.value):"");
+  const [month,setMonth]=useState(item?.month || projectMonths[start.getMonth()]),[year,setYear]=useState(item?.year || start.getFullYear());
+  const [count,setCount]=useState(1),[status,setStatus]=useState<ScheduleStatus>(item?.status || "Não iniciada");
+  const monthly=rubric==="Pessoal / Pró-labore"&&!item;
+  return <div className="modal-backdrop"><form className="modal edit-management-modal" role="dialog" aria-modal="true" aria-label={item?"Editar previsão":"Adicionar previsão"} onSubmit={e=>{e.preventDefault();onSave({...item,id:item?.id||"",version:item?.version||1,projectId:project.id,item:rubric,rubric,activity:activity.trim(),value:Number(value),month,year,status,monthsCount:monthly?count:1});}}>
+    <div className="modal-header"><div><span>Cronograma do projeto</span><h2>{item?"Editar previsão":"Adicionar previsão"}</h2></div><button type="button" className="icon-button" onClick={onClose} aria-label="Fechar"><X size={19}/></button></div>
+    <div className="modal-body form-grid management-edit-form">
+      <div className="field full"><span>Rubrica</span><RubricPicker value={rubric} onChange={setRubric} rubrics={rubrics} onAdd={onAddRubric}/></div>
+      <label className="field full"><span>Descrição completa da atividade</span><textarea required rows={3} value={activity} onChange={e=>setActivity(e.target.value)}/></label>
+      <label className="field"><span>{monthly?"Mês inicial":"Mês"}</span><select value={month} onChange={e=>setMonth(e.target.value)}>{projectMonths.map(m=><option key={m}>{m}</option>)}</select></label>
+      <label className="field"><span>Ano</span><input required type="number" min="2000" max="2200" value={year} onChange={e=>setYear(Number(e.target.value))}/></label>
+      <label className="field"><span>{monthly?"Valor mensal (R$)":"Valor previsto (R$)"}</span><input required type="number" min="0" step="0.01" value={value} onChange={e=>setValue(e.target.value)}/></label>
+      {monthly?<label className="field"><span>Quantidade de meses</span><input required type="number" min="1" max="60" step="1" value={count} onChange={e=>setCount(Number(e.target.value))}/></label>:<label className="field"><span>Status</span><select value={status} onChange={e=>setStatus(e.target.value as ScheduleStatus)}>{scheduleStatuses.map(s=><option key={s}>{s}</option>)}</select></label>}
+      {monthly&&<p className="monthly-note full"><strong>{count} parcelas de {money(Number(value)||0)} · Total {money(Math.round((Number(value)||0)*100)*count/100)}</strong><br/>Será criada uma previsão para cada mês, inclusive na mudança de ano. Registre o pagamento em Lançamentos quando ele ocorrer.</p>}
+      {item?.recurrenceId&&<p className="monthly-note full">Parcela {item.installment}/{item.installments}. A edição altera somente esta previsão mensal.</p>}
+    </div><div className="modal-footer"><button type="button" className="secondary-button" onClick={onClose}>Cancelar</button><button className="primary-button" disabled={!rubric}>Salvar {monthly?"previsões":"previsão"}</button></div>
+  </form></div>;
 }
 
 function CsvImportModal({
@@ -1936,25 +1951,24 @@ type ExpenseDraft = Pick<Expense,"supplier"|"description"|"rubric"|"value"|"date
 function NewEntryModal({
   onClose,
   onSave,
-  onImportCsv,
+  initial, rubrics, onAddRubric,
   showToast,
 }: {
   onClose: () => void;
   onSave: (entry: ExpenseDraft, draft: boolean, files: Record<string,File>) => void;
-  onImportCsv: () => void;
+  initial?:Expense; rubrics:RubricOption[]; onAddRubric:()=>void;
   showToast: (message: string) => void;
 }) {
   const [step, setStep] = useState(1);
-  const [rubric, setRubric] = useState("Material de Consumo");
-  const [supplier, setSupplier] = useState("");
-  const [description, setDescription] = useState("");
-  const [value, setValue] = useState("");
+  const [rubric, setRubric] = useState(initial?.rubric || "Material de Consumo");
+  const [supplier, setSupplier] = useState(initial?.supplier || "");
+  const [description, setDescription] = useState(initial?.description || "");
+  const [value, setValue] = useState(initial?String(initial.value):"");
   const [files, setFiles] = useState<Record<string, File>>({});
-  const [date,setDate]=useState(new Date().toLocaleDateString("en-CA")),[taxId,setTaxId]=useState(""),[notes,setNotes]=useState("");
+  const [date,setDate]=useState(initial?.date || new Date().toLocaleDateString("en-CA")),[taxId,setTaxId]=useState(initial?.taxId||""),[notes,setNotes]=useState(initial?.notes||"");
   const isThirdParty = rubric.includes("Terceiros");
   const requiredKeys = isThirdParty ? ["quote1", "quote2", "quote3", "invoice", "payment"] : ["invoice", "payment"];
-  const complete = requiredKeys.every((key) => Boolean(files[key]));
-  const firstStepComplete = Boolean(supplier && description && Number(value) > 0);
+  const firstStepComplete = Boolean(supplier.trim() && description.trim() && rubric && date && Number(value) > 0);
 
   const setFile = (key: string, file?: File) => {
     if (file) setFiles((current) => ({ ...current, [key]: file }));
@@ -1969,19 +1983,15 @@ function NewEntryModal({
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       <div className="modal large" role="dialog" aria-modal="true" aria-labelledby="entry-modal-title">
-        <div className="modal-header"><div><span>Novo lançamento</span><h2 id="entry-modal-title">{step === 1 ? "Dados da despesa" : "Documentos comprobatórios"}</h2></div><button className="icon-button" onClick={onClose} aria-label="Fechar"><X size={19} /></button></div>
+        <div className="modal-header"><div><span>{initial?"Editar lançamento":"Novo lançamento"}</span><h2 id="entry-modal-title">{step === 1 ? "Dados da despesa" : "Documentos comprobatórios"}</h2></div><button className="icon-button" onClick={onClose} aria-label="Fechar"><X size={19} /></button></div>
         <div className="stepper">
           <div className="active"><span>{step > 1 ? <Check size={14} /> : 1}</span><div><strong>Dados da despesa</strong><small>Identificação e valor</small></div></div>
-          <i /><div className={step === 2 ? "active" : ""}><span>2</span><div><strong>Documentos</strong><small>Comprovação obrigatória</small></div></div>
+          <i /><div className={step === 2 ? "active" : ""}><span>2</span><div><strong>Documentos</strong><small>Envio opcional agora</small></div></div>
         </div>
         {step === 1 ? (
           <div className="modal-body form-grid">
-            <button type="button" className="csv-entry-shortcut full" onClick={onImportCsv}>
-              <span className="csv-entry-shortcut-icon"><FileSpreadsheet size={20} /></span>
-              <span><strong>Preencher várias rubricas por CSV</strong><small>Importe fonte, elemento, descrição, unitário, quantidade e valor total.</small></span>
-              <span className="csv-entry-shortcut-action">Importar arquivo <ArrowRight size={15} /></span>
-            </button>
-            <label className="field full"><span>Rubrica *</span><select value={rubric} onChange={(event) => setRubric(event.target.value)}>{baseRubrics.map((item) => <option key={item.name}>{item.name}</option>)}</select><small>O saldo da rubrica será validado ao registrar a despesa.</small></label>
+            <div className="field full"><span>Rubrica *</span><RubricPicker value={rubric} onChange={setRubric} rubrics={rubrics} onAdd={onAddRubric}/><small>O saldo é definido pelo cronograma. Contrapartida usa a previsão específica ou, se ausente, o valor de contrapartida do projeto.</small></div>
+            {initial?.status==="Conciliado"&&<p className="document-pending-alert full">Ao editar, a despesa voltará para Em análise e precisará de nova conferência bancária.</p>}
             <label className="field"><span>Fornecedor / favorecido *</span><input value={supplier} onChange={(event) => setSupplier(event.target.value)} placeholder="Nome ou razão social" /></label>
             <label className="field"><span>CPF / CNPJ</span><input value={taxId} onChange={e=>setTaxId(e.target.value)} placeholder="00.000.000/0000-00" /></label>
             <label className="field full"><span>Descrição da despesa *</span><input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Informe o objeto da contratação ou aquisição" /></label>
@@ -1991,15 +2001,16 @@ function NewEntryModal({
           </div>
         ) : (
           <div className="modal-body">
-            {isThirdParty && <div className="document-requirement"><AlertCircle size={18} /><div><strong>Três cotações são obrigatórias para esta rubrica</strong><span>Anexe as propostas utilizadas na justificativa de seleção do fornecedor.</span></div></div>}
+            <div className="document-pending-alert"><AlertCircle size={18}/><span>O envio de documentos é opcional neste momento. Você pode registrar a despesa agora e anexá-los depois. A pendência ficará destacada.</span></div>
+            {isThirdParty && <div className="document-requirement"><AlertCircle size={18} /><div><strong>Esta rubrica possui três cotações no checklist</strong><span>Anexe as propostas utilizadas na justificativa de seleção do fornecedor.</span></div></div>}
             {isThirdParty && (
               <div className="upload-section">
-                <div className="upload-section-title"><span>Pesquisa de preços</span><b>3 arquivos obrigatórios</b></div>
+                <div className="upload-section-title"><span>Pesquisa de preços</span><b>Podem ser enviados depois</b></div>
                 <div className="upload-grid">{["quote1", "quote2", "quote3"].map((key, index) => <UploadBox key={key} label={"Cotação " + String(index + 1)} file={files[key]?.name} onFile={(file) => setFile(key, file)} />)}</div>
               </div>
             )}
             <div className="upload-section">
-              <div className="upload-section-title"><span>Comprovação da despesa</span><b>Obrigatório</b></div>
+              <div className="upload-section-title"><span>Comprovação da despesa</span><b>Envio opcional agora</b></div>
               <div className="upload-grid two"><UploadBox label="Nota fiscal / recibo" file={files.invoice?.name} onFile={(file) => setFile("invoice", file)} /><UploadBox label="Comprovante de pagamento" file={files.payment?.name} onFile={(file) => setFile("payment", file)} /></div>
             </div>
             <div className="document-tip"><ShieldCheck size={18} /><span>Formatos aceitos: PDF, JPG ou PNG · tamanho máximo de 10 MB por arquivo.</span></div>
@@ -2008,8 +2019,8 @@ function NewEntryModal({
         <div className="modal-footer">
           <button className="secondary-button" onClick={() => step === 1 ? onClose() : setStep(1)}>{step === 1 ? "Cancelar" : "Voltar"}</button>
           <div>
-            <button className="text-button draft-button" onClick={() => save(true)}>Salvar rascunho</button>
-            {step === 1 ? <button className="primary-button" disabled={!firstStepComplete} onClick={() => setStep(2)}>Continuar <ArrowRight size={17} /></button> : <button className="primary-button" disabled={!complete} onClick={() => save(false)}><Check size={17} /> Registrar despesa</button>}
+            {!initial&&<button className="text-button draft-button" disabled={!firstStepComplete} onClick={() => save(true)}>Salvar rascunho</button>}
+            {initial ? <button className="primary-button" disabled={!firstStepComplete} onClick={()=>save(Boolean(initial.draft))}>Salvar alterações</button> : step === 1 ? <button className="primary-button" disabled={!firstStepComplete} onClick={() => setStep(2)}>Continuar <ArrowRight size={17} /></button> : <button className="primary-button" disabled={!firstStepComplete} onClick={() => save(false)}><Check size={17} /> Registrar despesa</button>}
           </div>
         </div>
       </div>
@@ -2028,15 +2039,30 @@ function UploadBox({ label, file, onFile }: { label: string; file?: string; onFi
   );
 }
 
-function RemapModal({onClose,onSave}:{onClose:()=>void;onSave:(draft:{from:string;to:string;value:number;reason:string})=>void}) {
- const [from,setFrom]=useState("Material Permanente"),[to,setTo]=useState("Consultoria"),[value,setValue]=useState(""),[reason,setReason]=useState("");
- return <div className="modal-backdrop"><form className="modal" role="dialog" aria-modal="true" aria-label="Solicitar remanejamento" onSubmit={e=>{e.preventDefault();onSave({from,to,value:Number(value),reason});}}><div className="modal-header"><h2>Solicitar remanejamento</h2><button type="button" className="secondary-button" onClick={onClose}>Fechar</button></div><div className="modal-body form-grid"><label className="field"><span>Origem</span><select value={from} onChange={e=>setFrom(e.target.value)}>{baseRubrics.map(r=><option key={r.name}>{r.name}</option>)}</select></label><label className="field"><span>Destino</span><select value={to} onChange={e=>setTo(e.target.value)}>{baseRubrics.map(r=><option key={r.name}>{r.name}</option>)}</select></label><label className="field full"><span>Valor</span><input type="number" min="0.01" step="0.01" required value={value} onChange={e=>setValue(e.target.value)}/></label><label className="field full"><span>Justificativa</span><textarea required value={reason} onChange={e=>setReason(e.target.value)}/></label><p className="full">Após obter a autorização do concedente, um administrador poderá registrar a aprovação.</p></div><div className="modal-footer"><button type="button" className="secondary-button" onClick={onClose}>Cancelar</button><button className="primary-button" disabled={from===to}>Salvar solicitação</button></div></form></div>;
+function RemapModal({items,project,rubrics,onAddRubric,onClose,onSave}:{items:ScheduleItem[];project:Project;rubrics:RubricOption[];onAddRubric:()=>void;onClose:()=>void;onSave:(draft:RemapDraft)=>void}) {
+  const [sourceId,setSourceId]=useState(""),[to,setTo]=useState(""),[activity,setActivity]=useState(""),[value,setValue]=useState(""),[reason,setReason]=useState("");
+  const [month,setMonth]=useState(projectMonths[0]),[year,setYear]=useState(Number(project.startDate?.slice(0,4))||new Date().getFullYear());
+  const source=items.find(s=>s.id===sourceId);
+  return <div className="modal-backdrop"><form className="modal" role="dialog" aria-modal="true" aria-label="Solicitar remanejamento" onSubmit={e=>{e.preventDefault();onSave({sourceScheduleId:sourceId,to,activity,month,year,value:Number(value),reason});}}><div className="modal-header"><h2>Solicitar remanejamento</h2><button type="button" className="secondary-button" onClick={onClose}>Fechar</button></div><div className="modal-body form-grid">
+    <label className="field full"><span>Item de origem no cronograma</span><select required value={sourceId} onChange={e=>{setSourceId(e.target.value);const s=items.find(i=>i.id===e.target.value);if(s){setMonth(s.month);setYear(s.year||year);}}}><option value="">Selecione o item</option>{items.filter(s=>s.value>0).map(s=><option key={s.id} value={s.id}>{s.rubric||s.item} · {s.activity} · {s.month}/{s.year||"—"} · {money(s.value)}</option>)}</select></label>
+    {!items.length&&<p className="document-pending-alert full">Cadastre primeiro uma previsão no cronograma.</p>}
+    <div className="field full"><span>Rubrica do novo item</span><RubricPicker value={to} onChange={setTo} rubrics={rubrics} onAdd={onAddRubric}/></div>
+    <label className="field full"><span>Descrição da nova atividade</span><textarea required value={activity} onChange={e=>setActivity(e.target.value)}/></label>
+    <label className="field"><span>Mês previsto</span><select value={month} onChange={e=>setMonth(e.target.value)}>{projectMonths.map(m=><option key={m}>{m}</option>)}</select></label>
+    <label className="field"><span>Ano</span><input required type="number" min="2000" max="2200" value={year} onChange={e=>setYear(Number(e.target.value))}/></label>
+    <label className="field full"><span>Valor a transferir (R$)</span><input type="number" min="0.01" max={source?.value} step="0.01" required value={value} onChange={e=>setValue(e.target.value)}/><small>Limitado ao valor do item e ao saldo disponível da rubrica de origem.</small></label>
+    <label className="field full"><span>Justificativa</span><textarea required value={reason} onChange={e=>setReason(e.target.value)}/></label>
+    <p className="full">Após a aprovação, o valor será descontado da origem e uma nova previsão será criada no cronograma.</p>
+    </div><div className="modal-footer"><button type="button" className="secondary-button" onClick={onClose}>Cancelar</button><button className="primary-button" disabled={!sourceId||!to}>Salvar solicitação</button></div></form></div>;
+}
+function DeleteExpenseModal({expense,onClose,onConfirm}:{expense:Expense;onClose:()=>void;onConfirm:()=>void}) {
+  return <div className="modal-backdrop" style={{zIndex:2500}}><section className="modal" role="dialog" aria-modal="true" aria-label="Excluir lançamento"><div className="modal-header"><h2>Excluir lançamento?</h2></div><div className="modal-body"><p><strong>{expense.supplier}</strong> · {money(expense.value)}</p><p>{expense.description}</p><p>O lançamento e seus anexos serão excluídos. Os saldos serão recalculados e a exclusão ficará registrada no histórico de auditoria.</p></div><div className="modal-footer"><button className="secondary-button" onClick={onClose}>Cancelar</button><button className="delete-row-button" onClick={onConfirm}><Trash2 size={16}/> Confirmar exclusão</button></div></section></div>;
 }
 
-function ExpenseModal({expense,onClose,onUpload,onUpdate,admin}:{expense:Expense;onClose:()=>void;onUpload:(e:Expense,files:Record<string,File>)=>void;onUpdate:(e:Expense,action:string,reference?:string)=>void;admin:boolean}) {
+function ExpenseModal({expense,onClose,onUpload,onUpdate,admin,onEdit,onDelete}:{onEdit:(e:Expense)=>void;onDelete:(e:Expense)=>void;expense:Expense;onClose:()=>void;onUpload:(e:Expense,files:Record<string,File>)=>void;onUpdate:(e:Expense,action:string,reference?:string)=>void;admin:boolean}) {
  const [files,setFiles]=useState<Record<string,File>>({}),[reference,setReference]=useState("");
  const keys=expense.rubric.includes("Terceiros")?["invoice","payment","quote1","quote2","quote3"]:["invoice","payment"];
  const labels:Record<string,string>={invoice:"Nota fiscal / recibo",payment:"Comprovante de pagamento",quote1:"Cotação 1",quote2:"Cotação 2",quote3:"Cotação 3"};
  const pending=Object.fromEntries(Object.entries(files).filter(([kind])=>!expense.documents?.some(d=>d.kind===kind)));
- return <div className="modal-backdrop"><section className="modal expense-modal" role="dialog" aria-modal="true" aria-label="Detalhes da despesa"><div className="modal-header"><div><span>{expense.date}</span><h2>{expense.supplier}</h2></div><button className="secondary-button" onClick={onClose}>Fechar</button></div><div className="expense-detail-hero"><strong>{money(expense.value)}</strong><StatusBadge status={expense.status}/></div><div className="modal-body"><p>{expense.description}</p><p>{expense.rubric}</p>{expense.notes&&<p>{expense.notes}</p>}<h3>Documentos comprobatórios</h3><div className="file-checklist">{keys.map(kind=>{const doc=expense.documents?.find(d=>d.kind===kind);return doc?<a className="complete file-document-download" key={kind} href={"/api/documents/"+doc.id}><FileCheck2 size={18}/><span><strong>{labels[kind]}</strong><small>{doc.name}</small></span><Download size={18}/></a>:<UploadBox key={kind} label={labels[kind]} file={files[kind]?.name} onFile={file=>{if(file)setFiles({...files,[kind]:file});}}/>;})}</div>{Object.keys(pending).length>0&&<button className="secondary-button" onClick={()=>onUpload(expense,pending)}>Salvar anexos selecionados</button>}{!expense.draft&&admin&&expense.status!=="Conciliado"&&<label className="field"><span>Referência do extrato conferido</span><input value={reference} onChange={e=>setReference(e.target.value)} placeholder="Identificador bancário da transação"/></label>}</div><div className="modal-footer"><button className="secondary-button" onClick={onClose}>Fechar</button>{expense.draft?<button className="primary-button" disabled={expense.docs<expense.requiredDocs} onClick={()=>onUpdate(expense,"submit")}>Registrar despesa</button>:admin&&expense.status!=="Conciliado"?<button className="primary-button" disabled={!reference.trim()} onClick={()=>onUpdate(expense,"reconcile",reference)}>Confirmar conferência do extrato</button>:null}</div></section></div>;
+ return <div className="modal-backdrop"><section className="modal expense-modal" role="dialog" aria-modal="true" aria-label="Detalhes da despesa"><div className="modal-header"><div><span>{expense.date}</span><h2>{expense.supplier}</h2></div><button className="secondary-button" onClick={onClose}>Fechar</button></div><div className="expense-detail-hero"><strong>{money(expense.value)}</strong><StatusBadge status={expense.status}/></div><div className="modal-body"><p>{expense.description}</p><p>{expense.rubric}</p>{expense.notes&&<p>{expense.notes}</p>}<div className="expense-actions"><button className="secondary-button" onClick={()=>onEdit(expense)}><Pencil size={16}/> Editar lançamento</button><button className="delete-row-button" onClick={()=>onDelete(expense)}><Trash2 size={16}/> Excluir lançamento</button></div>{expense.docs<expense.requiredDocs&&<div className="document-pending-alert"><AlertCircle size={18}/><strong>Documentos pendentes: faltam {expense.requiredDocs-expense.docs} anexos.</strong></div>}<h3>Documentos comprobatórios</h3><div className="file-checklist">{keys.map(kind=>{const doc=expense.documents?.find(d=>d.kind===kind);return doc?<a className="complete file-document-download" key={kind} href={"/api/documents/"+doc.id}><FileCheck2 size={18}/><span><strong>{labels[kind]}</strong><small>{doc.name}</small></span><Download size={18}/></a>:<UploadBox key={kind} label={labels[kind]} file={files[kind]?.name} onFile={file=>{if(file)setFiles({...files,[kind]:file});}}/>;})}</div>{Object.keys(pending).length>0&&<button className="secondary-button" onClick={()=>onUpload(expense,pending)}>Salvar anexos selecionados</button>}{!expense.draft&&admin&&expense.status!=="Conciliado"&&<label className="field"><span>Referência do extrato conferido</span><input value={reference} onChange={e=>setReference(e.target.value)} placeholder="Identificador bancário da transação"/></label>}</div><div className="modal-footer"><button className="secondary-button" onClick={onClose}>Fechar</button>{expense.draft?<button className="primary-button" onClick={()=>onUpdate(expense,"submit")}>Registrar despesa</button>:admin&&expense.status!=="Conciliado"?<button className="primary-button" disabled={!reference.trim()||expense.docs<expense.requiredDocs} onClick={()=>onUpdate(expense,"reconcile",reference)}>Confirmar conferência do extrato</button>:null}</div></section></div>;
 }

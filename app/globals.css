@@ -5954,7 +5954,19 @@ label {
 }
 
 /* Server-backed application states */
-:root { --font-geist-sans: Arial, Helvetica, sans-serif; --font-geist-mono: monospace; }
+@font-face { font-family: "Geist"; src: url("/fonts/Geist-latin.woff2") format("woff2"); font-style: normal; font-weight: 100 900; font-display: swap; }
+:root { --font-geist-sans: "Geist"; --font-geist-mono: monospace; }
+body { font-feature-settings: "ss01"; }
+h1, h2, h3 { letter-spacing: -.025em; }
+.value-cell, .schedule-value, .metric-card strong { font-variant-numeric: tabular-nums; }
+.rubric-list:empty { min-height: 180px; }
+.rubric-picker { display: grid; gap: 8px; }
+.rubric-picker .text-button { justify-self: start; }
+.expense-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.monthly-note { padding: 14px; border-radius: 10px; background: var(--green-50); color: var(--green-800); }
+.document-pending-alert { display: flex; gap: 10px; align-items: center; padding: 14px; margin: 12px 0; border: 1px solid #e4b365; border-radius: 10px; background: var(--amber-50); color: #80490e; }
+.schedule-month { white-space: nowrap; }
+
 .auth-screen { min-height:100vh; display:flex; align-items:center; justify-content:center; padding:24px; background:#f4f7f5; }
 .auth-card { width:min(100%,480px); padding:36px; display:grid; gap:22px; }
 .auth-card h1 { font-size:28px; }
