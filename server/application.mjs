@@ -1,3 +1,4 @@
+import { readExcel, spreadsheetMime } from '../lib/spreadsheets.mjs';
 import { sourceOf, budgetSource, resourceSource, fundingSources } from '../lib/funding.mjs';
 import { renderReport } from './report.mjs';
 import { randomUUID } from 'node:crypto';
@@ -170,8 +171,12 @@ async function payload(request) {
         check(file.size>0&&file.size<=10*1024*1024,'Cada arquivo deve ter no máximo 10 MB.');
         check(!files.some(f=>f.kind===kind),'Documento duplicado.');
         const content=Buffer.from(await file.arrayBuffer());
-        const mime=content.subarray(0,5).toString()==='%PDF-' ? 'application/pdf' : content.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10])) ? 'image/png' : content[0]===255&&content[1]===216&&content[2]===255 ? 'image/jpeg' : null;
-        check(mime,'Envie um arquivo PDF, PNG ou JPEG válido.');
+        let mime=content.subarray(0,5).toString()==='%PDF-' ? 'application/pdf' : content.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10])) ? 'image/png' : content[0]===255&&content[1]===216&&content[2]===255 ? 'image/jpeg' : null;
+        if(kind==='project'&&spreadsheetMime(file.name)) {
+          try {readExcel(content,file.name,true);mime=spreadsheetMime(file.name);}
+          catch(error){throw new HttpError(422,error.message);}
+        }
+        check(mime,kind==='project'?'Envie um arquivo PDF, PNG, JPEG, XLS ou XLSX válido.':'Envie um arquivo PDF, PNG ou JPEG válido.');
         files.push({kind,name:text(file.name,'Nome do arquivo',200).replace(/[\r\n/\\]/g,'_'),mime,bytes:content});
       }
     } else data=JSON.parse(Buffer.from(bytes).toString('utf8'));

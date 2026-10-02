@@ -6075,3 +6075,8 @@ h1, h2, h3 { letter-spacing: -.025em; }
  .report-export > a { width: 100%; justify-content: center; }
  .project-document-grid { grid-template-columns: 1fr; padding: 0 16px 16px; }
 }
+
+.overview-resources { margin-bottom: 24px; }
+.overview-resources > .segmented-control { margin: 0 24px 18px; width: fit-content; }
+.overview-resources .data-table td small { display: block; color: var(--muted); margin-top: 4px; }
+.overview-resources .data-table td:last-child { white-space: nowrap; }

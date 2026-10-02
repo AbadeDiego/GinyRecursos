@@ -541,7 +541,7 @@ function Workspace({initial,onLogout}: {initial: State;onLogout:()=>void}) {
                   <button className="primary-button" onClick={() => setTeamMemberCreateOpen(true)}><Plus size={18} /> Adicionar membro</button>
                 </>
               ) : view === "schedule" ? (
-                <><button className="secondary-button" onClick={() => setScheduleImportOpen(true)}><FileSpreadsheet size={18} /> Importar CSV</button><button className="primary-button" onClick={()=>setScheduleCreateOpen(true)}><Plus size={18}/> Adicionar previsão</button></>
+                <><button className="secondary-button" onClick={() => setScheduleImportOpen(true)}><FileSpreadsheet size={18} /> Importar planilha</button><button className="primary-button" onClick={()=>setScheduleCreateOpen(true)}><Plus size={18}/> Adicionar previsão</button></>
               ) : view === "resources" ? (
                 <button className="primary-button" onClick={() => setResourceEntryOpen(true)}><ArrowDownToLine size={18} /> Lançar recurso</button>
               ) : view === "remaps" ? (
@@ -561,7 +561,7 @@ function Workspace({initial,onLogout}: {initial: State;onLogout:()=>void}) {
           </div>
 
           {(view==="schedule"||view==="remaps")&&activeProject.planningWarnings?.map(w=><div className="notice-banner" key={w.source}><AlertCircle size={21}/><div><strong>{w.source}: planejamento {money(w.excess)} acima do limite</strong><span>Planejado: {money(w.planned)} · Limite: {money(w.limit)}. Você pode editar e reduzir as previsões sem aumentar o excesso. Valores já executados continuam protegidos.</span></div></div>)}
-          {view === "overview" && <Overview project={activeProject} rubrics={activeRubrics} entries={projectEntries} navigate={navigate} openEntry={setSelectedExpense} newEntry={() => setNewEntryOpen(true)} importCsv={openCsvImport} />}
+          {view === "overview" && <Overview resources={resources.filter(r=>r.projectId===activeProject.id)} onEditResource={setEditingResource} project={activeProject} rubrics={activeRubrics} entries={projectEntries} navigate={navigate} openEntry={setSelectedExpense} newEntry={() => setNewEntryOpen(true)} importCsv={openCsvImport} />}
           {view === "companies" && <CompaniesView companies={companyList} projects={projectList} selectedCompanyId={profileCompanyId} activeProjectId={projectId} onSelectCompany={setProfileCompanyId} onNewCompany={() => setCompanyModalOpen(true)} onNewProject={startProjectCreation} onSwitchProject={switchProject} />}
           {view === "team" && <TeamView project={activeProject} members={activeTeamMembers} onImport={() => setTeamImportOpen(true)} onAdd={() => setTeamMemberCreateOpen(true)} onEdit={setEditingTeamMember} onDelete={setTeamMemberToDelete} />}
           {view === "schedule" && <ScheduleView onAdd={()=>setScheduleCreateOpen(true)} project={activeProject} items={activeScheduleItems} onImport={() => setScheduleImportOpen(true)} onEdit={setEditingScheduleItem} />}
@@ -770,12 +770,14 @@ function ProjectModal({
   const [name, setName] = useState("");
   const [code, setCode] = useState("");
   const [agency, setAgency] = useState("FINEP");
+  const [customAgency,setCustomAgency]=useState("");
+  const resolvedAgency=agency==="Outro"?customAgency.trim():agency;
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [approved, setApproved] = useState("");
   const [counterpart, setCounterpart] = useState("");
   const [installments, setInstallments] = useState("4");
-  const valid = Boolean(companyId && name && code && agency && startDate && endDate && Number(approved) > 0 && Number(installments) > 0);
+  const valid = Boolean(companyId && name && code && resolvedAgency && startDate && endDate && Number(approved) > 0 && Number(installments) > 0);
   const company = companies.find((item) => item.id === companyId);
 
   return (
@@ -793,7 +795,8 @@ function ProjectModal({
             <label className="field full"><span>Empresa beneficiária *</span><select value={companyId} onChange={(event) => setCompanyId(event.target.value)}>{companies.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
             <label className="field full"><span>Nome do projeto *</span><input value={name} onChange={(event) => setName(event.target.value)} placeholder="Título oficial do projeto aprovado" /></label>
             <label className="field"><span>Número do convênio / termo *</span><input value={code} onChange={(event) => setCode(event.target.value)} placeholder="Ex.: SUBV-2026-001" /></label>
-            <label className="field"><span>Órgão concedente *</span><select value={agency} onChange={(event) => setAgency(event.target.value)}><option>FINEP</option><option>EMBRAPII</option><option>FACEPE</option><option>CNPq</option><option>BNDES</option><option>Outro</option></select></label>
+            <label className="field"><span>Órgão concedente *</span><select value={agency} onChange={(event) => setAgency(event.target.value)}><option>FINEP</option><option>EMBRAPII</option><option>FACEPE</option><option>CNPq</option><option>BNDES</option><option value="Outro">Outros</option></select></label>
+            {agency==="Outro"&&<label className="field full"><span>Nome do órgão concedente *</span><input autoFocus maxLength={100} value={customAgency} onChange={e=>setCustomAgency(e.target.value)} placeholder="Digite o nome do órgão concedente"/></label>}
             <label className="field"><span>Início da vigência *</span><input type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} /></label>
             <label className="field"><span>Fim da vigência *</span><input type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} /></label>
           </div>
@@ -805,14 +808,14 @@ function ProjectModal({
           </div>
           <div className="project-create-note"><ShieldCheck size={17} /><span><strong>O projeto será criado como “A iniciar”.</strong> Depois você poderá importar as rubricas, registrar as parcelas e anexar o instrumento aprovado.</span></div>
         </div>
-        <div className="modal-footer"><button className="secondary-button" onClick={onClose}>Cancelar</button><button className="primary-button" disabled={!valid} onClick={() => onSave({ companyId, name, code, agency, startDate, endDate, approved: Number(approved), counterpart: Number(counterpart) || 0, installments: Number(installments) })}>Criar e acessar projeto <Rocket size={17} /></button></div>
+        <div className="modal-footer"><button className="secondary-button" onClick={onClose}>Cancelar</button><button className="primary-button" disabled={!valid} onClick={() => onSave({ companyId, name, code, agency:resolvedAgency, startDate, endDate, approved: Number(approved), counterpart: Number(counterpart) || 0, installments: Number(installments) })}>Criar e acessar projeto <Rocket size={17} /></button></div>
       </div>
     </div>
   );
 }
 
 function Overview({
-  project,
+  project, resources, onEditResource,
   rubrics,
   entries,
   navigate,
@@ -820,7 +823,7 @@ function Overview({
   newEntry,
   importCsv,
 }: {
-  project: Project;
+  project: Project; resources:Resource[]; onEditResource:(r:Resource)=>void;
   rubrics: typeof baseRubrics;
   entries: Expense[];
   navigate: (view: View) => void;
@@ -894,6 +897,7 @@ function Overview({
         <article className="metric-card"><div className="metric-card-head"><span>Saldo · Contrapartida</span><div className="metric-icon amber"><HandCoins size={20}/></div></div><strong>{money(project.counterpartRealized-counterExecuted)}</strong><div className="metric-footer muted">Aportes próprios menos despesas da contrapartida</div></article>
       </section>
 
+      <OverviewResources resources={resources} onEdit={onEditResource} onViewAll={()=>navigate("resources")}/>
       <section className="overview-grid">
         <article className="panel rubric-panel">
           <div className="panel-header">
@@ -1031,6 +1035,12 @@ function Entries({
   );
 }
 
+function OverviewResources({resources,onEdit,onViewAll}:{resources:Resource[];onEdit:(r:Resource)=>void;onViewAll:()=>void}) {
+ const [source,setSource]=useState<FundingSource>("Subvenção");
+ const list=resources.filter(r=>resourceSource(r)===source).sort((a,b)=>b.date.localeCompare(a.date));
+ return <section className="panel overview-resources"><div className="panel-header"><div><h2>Recursos recebidos</h2><p>Consulte e edite as entradas de recursos do projeto.</p></div><button className="text-button" onClick={onViewAll}>Ver todos <ArrowRight size={15}/></button></div><div className="segmented-control">{(["Subvenção","Contrapartida"] as FundingSource[]).map(item=><button key={item} className={source===item?"active":""} onClick={()=>setSource(item)}>{item}</button>)}</div>{list.length?<div className="table-wrap"><table className="data-table"><thead><tr><th>Data</th><th>Recurso</th><th>Referência</th><th>Valor</th><th>Ação</th></tr></thead><tbody>{list.slice(0,5).map(r=><tr key={r.id}><td>{r.date.split("-").reverse().join("/")}</td><td>{r.kind}{r.installment&&<small>{r.installment}ª parcela</small>}</td><td>{r.reference||"—"}</td><td>{money(r.value)}</td><td><button className="secondary-button small" onClick={()=>onEdit(r)} aria-label={`Editar ${r.kind} de ${money(r.value)}`}><Pencil size={14}/> Editar recurso</button></td></tr>)}</tbody></table></div>:<div className="empty-state compact"><p>Nenhum recurso de {source.toLowerCase()} lançado.</p></div>}{list.length>5&&<p className="panel-note">Exibindo os 5 recursos mais recentes de {list.length}. Use “Ver todos” para acessar os demais.</p>}</section>;
+}
+
 function Resources({project,resources,onAdd,onEdit,onDelete}:{project:Project;resources:Resource[];onAdd:()=>void;onEdit:(r:Resource)=>void;onDelete:(r:Resource)=>void}) {
   return <><section className="summary-strip"><div><span>Subvenção recebida</span><strong>{money(project.released)}</strong></div><div><span>Contrapartida financeira</span><strong>{money(project.counterpartRealized)}</strong></div><div><span>Rendimentos da subvenção</span><strong>{money(project.income)}</strong></div></section><section className="panel"><div className="panel-header"><div><h2>Entradas de recursos</h2><p>Créditos efetivamente registrados no projeto.</p></div><button className="secondary-button" onClick={onAdd}>Registrar recurso</button></div><div className="table-wrap"><table className="data-table"><thead><tr><th>Data</th><th>Tipo / Fonte</th><th>Parcela</th><th>Referência</th><th>Valor</th><th>Comprovante</th><th>Ações</th></tr></thead><tbody>{resources.map(r=><tr key={r.id}><td>{r.date}</td><td>{r.kind}<small>{resourceSource(r)}</small></td><td>{r.installment||"—"}</td><td>{r.reference||"—"}</td><td>{money(r.value)}</td><td>{r.documents.length?r.documents.map(d=><a key={d.id} href={"/api/documents/"+d.id}>{d.name}</a>):"Sem comprovante"}</td><td><div className="expense-actions"><button className="secondary-button small" onClick={()=>onEdit(r)}><Pencil size={14}/> Editar</button><button className="delete-row-button" onClick={()=>onDelete(r)}><Trash2 size={14}/> Excluir</button></div></td></tr>)}</tbody></table></div>{!resources.length&&<div className="empty-state compact"><p>Nenhum recurso recebido foi registrado.</p></div>}</section></>;
 }
@@ -1068,13 +1078,13 @@ function Documents({documents,onAdd,onEdit,onDelete}:{documents:ProjectDocument[
  const [query,setQuery]=useState("");
  const visible=documents.filter(d=>(d.name+" "+d.filename).toLocaleLowerCase().includes(query.toLocaleLowerCase()));
  return <section className="panel project-document-panel"><div className="panel-header"><div><h2>Arquivo do projeto <span className="count-badge">{documents.length}</span></h2><p>Documentos institucionais, versões do projeto e termos assinados.</p></div><div className="search-field"><Search size={17}/><input aria-label="Buscar documento" value={query} onChange={e=>setQuery(e.target.value)} placeholder="Buscar pelo nome do documento"/></div></div>
- <div className="project-document-grid">{visible.map(d=><article key={d.id} className="project-document-card"><div className="project-document-icon"><FileText size={25}/><span>{d.mime==="application/pdf"?"PDF":"IMAGEM"}</span></div><h3>{d.name}</h3><p title={d.filename}>{d.filename}</p><small>{(d.size/1024/1024).toLocaleString("pt-BR",{maximumFractionDigits:2})} MB · {d.createdAt.slice(0,10).split("-").reverse().join("/")}</small><div className="project-document-actions"><a className="secondary-button small" href={"/api/projectDocuments/"+d.id}><Download size={15}/> Baixar</a><button className="icon-button" aria-label={"Editar "+d.name} onClick={()=>onEdit(d)}><Pencil size={16}/></button><button className="icon-button" aria-label={"Excluir "+d.name} onClick={()=>onDelete(d)}><Trash2 size={16}/></button></div></article>)}</div>
+ <div className="project-document-grid">{visible.map(d=><article key={d.id} className="project-document-card"><div className="project-document-icon"><FileText size={25}/><span>{d.mime==="application/pdf"?"PDF":d.filename.toLowerCase().endsWith(".xlsx")?"XLSX":d.filename.toLowerCase().endsWith(".xls")?"XLS":"IMAGEM"}</span></div><h3>{d.name}</h3><p title={d.filename}>{d.filename}</p><small>{(d.size/1024/1024).toLocaleString("pt-BR",{maximumFractionDigits:2})} MB · {d.createdAt.slice(0,10).split("-").reverse().join("/")}</small><div className="project-document-actions"><a className="secondary-button small" href={"/api/projectDocuments/"+d.id}><Download size={15}/> Baixar</a><button className="icon-button" aria-label={"Editar "+d.name} onClick={()=>onEdit(d)}><Pencil size={16}/></button><button className="icon-button" aria-label={"Excluir "+d.name} onClick={()=>onDelete(d)}><Trash2 size={16}/></button></div></article>)}</div>
  {!visible.length&&<div className="empty-state"><FolderOpen size={32}/><strong>{query?"Nenhum documento encontrado":"Guarde os documentos do projeto aqui"}</strong><p>{query?"Tente outro nome.":"Adicione o projeto original, o termo de outorga ou outro arquivo e dê um nome para encontrá-lo facilmente."}</p>{!query&&<button className="primary-button" onClick={onAdd}><Plus size={17}/> Adicionar primeiro documento</button>}</div>}</section>;
 }
 
 function ProjectDocumentModal({initial,onClose,onSave}:{initial?:ProjectDocument;onClose:()=>void;onSave:(name:string,file?:File)=>void}) {
  const [name,setName]=useState(initial?.name||""),[file,setFile]=useState<File|undefined>();
- return <div className="modal-backdrop"><section className="modal" role="dialog" aria-modal="true" aria-labelledby="project-document-title"><div className="modal-header"><div><span>Arquivo do projeto</span><h2 id="project-document-title">{initial?"Editar documento":"Adicionar documento"}</h2></div><button className="icon-button" aria-label="Fechar" onClick={onClose}><X size={20}/></button></div><div className="modal-body"><label className="field"><span>Nome do documento *</span><input autoFocus maxLength={200} value={name} onChange={e=>setName(e.target.value)} placeholder="Ex.: Projeto original ou Termo de outorga"/></label><div className="upload-section"><UploadBox label={initial?"Substituir arquivo (opcional)":"Arquivo do documento *"} file={file?.name} onFile={setFile}/>{initial&&<p className="panel-note">Arquivo atual: {initial.filename}. Se não selecionar outro, o arquivo será mantido.</p>}</div><p className="panel-note">PDF, JPG ou PNG · até 10 MB por arquivo.</p></div><div className="modal-footer"><button className="secondary-button" onClick={onClose}>Cancelar</button><button className="primary-button" disabled={!name.trim()||(!initial&&!file)||Boolean(file&&file.size>10*1024*1024)} onClick={()=>onSave(name,file)}>Salvar documento</button></div>{file&&file.size>10*1024*1024&&<p role="alert" className="panel-note">O arquivo deve ter no máximo 10 MB.</p>}</section></div>;
+ return <div className="modal-backdrop"><section className="modal" role="dialog" aria-modal="true" aria-labelledby="project-document-title"><div className="modal-header"><div><span>Arquivo do projeto</span><h2 id="project-document-title">{initial?"Editar documento":"Adicionar documento"}</h2></div><button className="icon-button" aria-label="Fechar" onClick={onClose}><X size={20}/></button></div><div className="modal-body"><label className="field"><span>Nome do documento *</span><input autoFocus maxLength={200} value={name} onChange={e=>setName(e.target.value)} placeholder="Ex.: Projeto original ou Termo de outorga"/></label><div className="upload-section"><UploadBox accept=".pdf,.jpg,.jpeg,.png,.xls,.xlsx" label={initial?"Substituir arquivo (opcional)":"Arquivo do documento *"} file={file?.name} onFile={setFile}/>{initial&&<p className="panel-note">Arquivo atual: {initial.filename}. Se não selecionar outro, o arquivo será mantido.</p>}</div><p className="panel-note">PDF, JPG, PNG, XLS ou XLSX · até 10 MB por arquivo.</p></div><div className="modal-footer"><button className="secondary-button" onClick={onClose}>Cancelar</button><button className="primary-button" disabled={!name.trim()||(!initial&&!file)||Boolean(file&&file.size>10*1024*1024)} onClick={()=>onSave(name,file)}>Salvar documento</button></div>{file&&file.size>10*1024*1024&&<p role="alert" className="panel-note">O arquivo deve ter no máximo 10 MB.</p>}</section></div>;
 }
 
 function ProjectLinksView({
@@ -1225,7 +1235,7 @@ function ScheduleView({
       <section className="panel management-table-panel">
         <div className="panel-header management-panel-header">
           <div><h2>Cronograma de {project.name}</h2><p>Atividades, valores e meses previstos para a execução do projeto.</p></div>
-          <button className="secondary-button small" onClick={onImport}><FileSpreadsheet size={15} /> Importar outro CSV</button>
+          <button className="secondary-button small" onClick={onImport}><FileSpreadsheet size={15} /> Importar planilha</button>
         </div>
         {items.length > 0 ? (
           <>
@@ -1463,6 +1473,9 @@ function OperationalCsvImportModal({
   onImport: (rows: Array<CsvTeamRow | CsvScheduleRow>) => void;
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const readSequence=useRef(0);
+  const [reading,setReading]=useState(false);
+  const [sheetName,setSheetName]=useState("");
   const [rows, setRows] = useState<Array<CsvTeamRow | CsvScheduleRow>>([]);
   const [fileName, setFileName] = useState("");
   const [error, setError] = useState("");
@@ -1470,33 +1483,32 @@ function OperationalCsvImportModal({
   const isTeam = kind === "team";
   const labels = isTeam
     ? { eyebrow: "Equipe técnica", title: "Importar equipe por CSV", action: "Importar e preencher equipe" }
-    : { eyebrow: "Cronograma do projeto", title: "Importar cronograma por CSV", action: "Importar e preencher cronograma" };
+    : { eyebrow: "Cronograma do projeto", title: "Importar cronograma", action: "Importar e preencher cronograma" };
 
   const readFile = async (file?: File) => {
     if (!file) return;
-    if (file.size > 5 * 1024 * 1024) {
-      setRows([]);
-      setError("O arquivo ultrapassa o limite de 5 MB.");
-      return;
-    }
-    if (!file.name.toLowerCase().endsWith(".csv")) {
-      setRows([]);
-      setError("Selecione um arquivo no formato CSV.");
-      return;
-    }
+    const sequence=++readSequence.current;
+    setRows([]);setError("");setSheetName("");setFileName(file.name);setReading(false);
+    if (file.size > 5 * 1024 * 1024) {setError("O arquivo ultrapassa o limite de 5 MB.");return;}
+    if (!(isTeam?/\.csv$/i:/\.(csv|xlsx?)$/i).test(file.name)) {setError(isTeam?"Selecione um arquivo CSV.":"Selecione um arquivo CSV, XLS ou XLSX.");return;}
+    setReading(true);
     try {
-      const text = await file.text();
-      const parsed = isTeam ? parseProjectCsv(text, "team") : parseProjectCsv(text, "schedule");
-      setRows(parsed.rows);
-      setFileName(file.name);
-      setError(parsed.error);
-    } catch {
-      setRows([]);
-      setError("Não foi possível ler o arquivo. Verifique a codificação e tente novamente.");
-    }
+      let text:string,tab="";
+      if(/\.xlsx?$/i.test(file.name)) {
+        const {spreadsheetCsv}=await import("../lib/spreadsheets.mjs");
+        const result=spreadsheetCsv(new Uint8Array(await file.arrayBuffer()),file.name);text=result.csv;tab=result.sheetName;
+      } else text=await file.text();
+      const parsed = isTeam?parseProjectCsv(text,"team"):parseProjectCsv(text,"schedule");
+      if(sequence!==readSequence.current)return;
+      setRows(parsed.rows);setSheetName(tab);setError(parsed.error);
+    } catch(error) {
+      if(sequence!==readSequence.current)return;
+      setRows([]);setError((error as Error).message||"Não foi possível ler o arquivo.");
+    } finally {if(sequence===readSequence.current)setReading(false);}
   };
 
   const useExample = () => {
+    ++readSequence.current;setReading(false);setSheetName("");
     setRows(isTeam ? sampleTeamRows : sampleScheduleRows);
     setFileName(isTeam ? "modelo_equipe_tecnica.csv" : "modelo_cronograma.csv");
     setError("");
@@ -1532,7 +1544,7 @@ function OperationalCsvImportModal({
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       <div className="modal csv-modal operational-csv-modal" role="dialog" aria-modal="true" aria-labelledby={`${kind}-csv-title`}>
-        <input ref={fileInputRef} className="csv-hidden-input" type="file" accept=".csv,text/csv" onChange={(event) => readFile(event.target.files?.[0])} />
+        <input ref={fileInputRef} className="csv-hidden-input" type="file" accept={isTeam?".csv,text/csv":".csv,.xls,.xlsx"} onChange={(event) => readFile(event.target.files?.[0])} />
         <div className="modal-header">
           <div><span>{labels.eyebrow}</span><h2 id={`${kind}-csv-title`}>{labels.title}</h2></div>
           <button className="icon-button" onClick={onClose} aria-label="Fechar"><X size={19} /></button>
@@ -1542,7 +1554,7 @@ function OperationalCsvImportModal({
           <div className="modal-body csv-modal-body">
             <div className="csv-intro">
               <div className="csv-intro-icon">{isTeam ? <Users size={24} /> : <CalendarDays size={24} />}</div>
-              <div><strong>{isTeam ? "Cadastre toda a equipe de uma só vez" : "Preencha o planejamento em poucos passos"}</strong><p>{isTeam ? "O sistema valida as colunas e mostra uma prévia antes de preencher a equipe do projeto." : "Use rubrica, fonte (Subvenção ou Contrapartida), atividade, valor e mês por extenso. Arquivos anteriores sem fonte assumem Subvenção, exceto a rubrica Contrapartida. As colunas opcionais ano e meses definem o início e a quantidade de parcelas do pró-labore. Valor é o valor de cada mês; sem meses, uma linha representa uma única previsão."}</p></div>
+              <div><strong>{isTeam ? "Cadastre toda a equipe de uma só vez" : "Preencha o planejamento em poucos passos"}</strong><p>{isTeam ? "O sistema valida as colunas e mostra uma prévia antes de preencher a equipe do projeto." : "Excel: coloque os dados na primeira aba e converta fórmulas em valores. Use rubrica, fonte (Subvenção ou Contrapartida), atividade, valor e mês por extenso. Arquivos anteriores sem fonte assumem Subvenção, exceto a rubrica Contrapartida. As colunas opcionais ano e meses definem o início e a quantidade de parcelas do pró-labore. Valor é o valor de cada mês; sem meses, uma linha representa uma única previsão."}</p></div>
             </div>
             <button
               className={`csv-dropzone ${dragActive ? "dragging" : ""}`}
@@ -1552,8 +1564,8 @@ function OperationalCsvImportModal({
               onDrop={(event) => { event.preventDefault(); setDragActive(false); readFile(event.dataTransfer.files?.[0]); }}
             >
               <span><UploadCloud size={25} /></span>
-              <strong>Arraste o CSV para cá ou clique para selecionar</strong>
-              <small>Arquivo CSV de até 5 MB · separador vírgula ou ponto e vírgula</small>
+              <strong>{reading?"Lendo arquivo…":isTeam?"Arraste o CSV para cá ou clique para selecionar":"Arraste o CSV, XLS ou XLSX para cá"}</strong>
+              <small>{isTeam?"Arquivo CSV de até 5 MB · separador vírgula ou ponto e vírgula":"Até 5 MB · Excel: primeira aba com cabeçalhos na primeira linha"}</small>
             </button>
             {error && <div className="csv-error"><AlertCircle size={17} /><span><strong>Arquivo não reconhecido</strong>{error}</span></div>}
             <div className="csv-schema operational-schema">
@@ -1565,7 +1577,7 @@ function OperationalCsvImportModal({
         ) : (
           <div className="modal-body csv-preview-body">
             <div className="csv-file-summary operational-file-summary">
-              <div className="csv-file-name"><span><FileSpreadsheet size={21} /></span><div><strong>{fileName}</strong><small>Vinculado a {project.code}</small></div></div>
+              <div className="csv-file-name"><span><FileSpreadsheet size={21} /></span><div><strong>{fileName}</strong><small>Vinculado a {project.code}{sheetName?` · Aba: ${sheetName}`:""}</small></div></div>
               <div><span>{isTeam ? "Membros" : "Itens"}</span><strong>{rows.length}</strong></div>
               <div><span>{isTeam ? "Funções" : "Valor total"}</span><strong>{isTeam ? roleCount : money(scheduleTotal)}</strong></div>
             </div>
@@ -1596,7 +1608,7 @@ function OperationalCsvImportModal({
           <div>
             <button className="text-button csv-template-button" onClick={downloadTemplate}><Download size={15} /> Baixar modelo CSV</button>
             {rows.length > 0 && <button className="secondary-button" onClick={() => fileInputRef.current?.click()}><RefreshCw size={15} /> Escolher outro</button>}
-            {rows.length > 0 && <button className="primary-button" disabled={issueCount > 0} onClick={() => onImport(rows)}><Check size={17} /> {labels.action}</button>}
+            {rows.length > 0 && <button className="primary-button" disabled={reading||issueCount > 0} onClick={() => onImport(rows)}><Check size={17} /> {labels.action}</button>}
           </div>
         </div>
       </div>
@@ -2005,10 +2017,10 @@ function NewEntryModal({
   );
 }
 
-function UploadBox({ label, file, onFile }: { label: string; file?: string; onFile: (file?: File) => void }) {
+function UploadBox({ label, file, onFile, accept=".pdf,.jpg,.jpeg,.png" }: { label: string; file?: string; onFile: (file?: File) => void; accept?:string }) {
   return (
     <label className={"upload-box " + (file ? "has-file" : "")}>
-      <input type="file" accept=".pdf,.jpg,.jpeg,.png" onChange={(event) => onFile(event.target.files?.[0])} />
+      <input type="file" accept={accept} onChange={(event) => onFile(event.target.files?.[0])} />
       <span className="upload-box-icon">{file ? <FileCheck2 size={21} /> : <UploadCloud size={21} />}</span>
       <strong>{label}</strong><small>{file || "Clique para selecionar o arquivo"}</small>
       {file && <b><Check size={13} /> anexado</b>}

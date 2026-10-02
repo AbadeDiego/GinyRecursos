@@ -192,3 +192,11 @@ Referências oficiais:
 | `GET /api/projectDocuments/:id` | Download original autenticado |
 
 O estado inclui `projectDocuments` sem os bytes dos arquivos. A migração não exige apagar ou recriar o banco.
+
+## Planilhas, órgão concedente e edição de recursos
+
+- No cadastro do projeto, “Outros” abre um campo obrigatório para o nome do órgão concedente (até 100 caracteres). O nome informado é salvo e aparece no projeto e nos relatórios.
+- Em Documentos, são aceitos PDF, JPG, PNG, XLS e XLSX (até 10 MB). Planilhas são preservadas no formato original e validadas como arquivos Excel; não há conversão para PDF. Os anexos de despesas e recursos continuam aceitando PDF/imagens.
+- O Cronograma aceita CSV, XLS e XLSX (até 5 MB e 2.000 linhas de dados). Em Excel, use a primeira aba, cabeçalhos na primeira linha e resultados colados como valores, sem fórmulas. A prévia identifica a aba lida e mantém a revisão das rubricas, fontes, valores e parcelas antes de confirmar. As mesmas colunas do CSV são utilizadas; valores numéricos do Excel preservam os centavos, independentemente da formatação monetária.
+- A Visão Geral inclui “Recursos recebidos”, com filtros de Subvenção/Contrapartida e edição direta de cada entrada. São exibidas as cinco entradas mais recentes de cada fonte; “Ver todos” abre Recursos e Parcelas. Alterações atualizam os totais e mantêm as validações de limite, parcela e versão.
+- A leitura Excel utiliza SheetJS 0.20.3, fixado pelo pacote oficial e integridade no lockfile: https://docs.sheetjs.com/docs/getting-started/installation/nodejs/ . O build precisa de acesso ao CDN de distribuição, assim como aos pacotes npm.

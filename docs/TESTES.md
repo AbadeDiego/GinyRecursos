@@ -30,6 +30,10 @@ Ambiente: Node.js 24.19.0, Linux, bancos SQLite temporários. A validação HTTP
 | Planejamento legado acima do teto | Edição neutra, redução gradual, exclusão e remanejamento sem aumentar excesso; proteção de execução e rollback de reversões inválidas |
 | Checklist | Cinco anexos opcionais em todas as rubricas, três orçamentos e contagem exata; conciliação sem anexos |
 | Documentos gerais | Nome livre, upload, download, renomeação, substituição, exclusão, conflitos, idempotência, perfil consulta, autenticação e relatório |
+| Excel no cronograma | XLS/XLSX reais, acentos e multilinha, primeira aba, números formatados, fontes e pró-labore; rollback por limite, fórmulas, corrupção, abas vazias e limite de linhas |
+| Excel em documentos | XLS/XLSX, MIME, nome e bytes originais, substituição, download e rejeição de extensão falsa; preservação após backup no teste HTTP |
+| Órgão personalizado | Nome livre persistido no projeto e no relatório, nome vazio rejeitado |
+| Recursos na Visão Geral | Edição de entradas das duas fontes pela mesma API, com totais recalculados e verificação HTTP |
 | Links editáveis | Nome e URL, protocolos inválidos, conflito de versão e preservação da data original |
 
 Comando reprodutível:
@@ -38,9 +42,9 @@ Comando reprodutível:
 npm run test:all
 ```
 
-Resultado da execução em 02/10/2026: **40 testes aprovados, zero falhas**, verificação TypeScript e build concluídos.
+Resultado da execução em 02/10/2026: **46 testes aprovados, zero falhas**, verificação TypeScript e build concluídos.
 
-A suíte contém 39 testes de domínio/integração e 1 cenário HTTP de produção com múltiplas verificações. TypeScript e build fazem parte do comando. Arquivos em `tests/backend.test.mjs` e `tests/production.test.mjs`.
+A suíte contém 45 testes de domínio/integração e 1 cenário HTTP de produção com múltiplas verificações. TypeScript e build fazem parte do comando. Arquivos em `tests/backend.test.mjs` e `tests/production.test.mjs`.
 
 ## Homologação no destino
 

@@ -1,3 +1,5 @@
+import {utils as excelUtils,write as writeExcel} from 'xlsx';
+import {spreadsheetCsv} from '../lib/spreadsheets.mjs';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
@@ -20,7 +22,7 @@ async function fixture() {
     const headers={origin,cookie,...options.headers};
     if(method!=='GET')headers['idempotency-key']=options.key||randomUUID();
     let body;
-    if(options.files) {body=new FormData();body.set('data',JSON.stringify(data));for(const [kind,contents] of Object.entries(options.files))body.set(kind,new Blob([contents]),`${kind}.pdf`);}
+    if(options.files) {body=new FormData();body.set('data',JSON.stringify(data));for(const [kind,contents] of Object.entries(options.files))body.set(kind,new Blob([contents]),options.fileNames?.[kind]||`${kind}.pdf`);}
     else if(data!==undefined){headers['content-type']='application/json';body=JSON.stringify(data);}
     const response=await app(new Request(origin+'/api/'+path,{method,headers,body}));
     const raw=await response.text();let result;try{result=JSON.parse(raw);}catch{result=raw;}
@@ -493,4 +495,52 @@ test('Migração 4 preserva banco existente e anexos ao criar o arquivo geral do
   assert.equal(db.prepare('SELECT count(*) AS n FROM projectDocuments').get().n,0);assert.equal(db.prepare('SELECT count(*) AS n FROM users').get().n,1);db.close();
   db=openDatabase(path);assert.equal(db.prepare('SELECT count(*) AS n FROM migrations WHERE version=4').get().n,1);assert.equal(db.prepare('PRAGMA integrity_check').get().integrity_check,'ok');db.close();
  } finally {rmSync(directory,{recursive:true,force:true});}
+});
+
+function excelFixture(bookType,values=[['Rubrica','Fonte','Atividade','Valor','Mês','Ano','Meses'],['Consultoria','Subvenção','Pesquisa, teste; revisão\nSegunda linha',1234.56,'Janeiro',2026,1],['Pró-labore','Contrapartida','Coordenação mensal',500,'Fevereiro',2026,2]],edit) {
+ const book=excelUtils.book_new(),sheet=excelUtils.aoa_to_sheet(values);if(edit)edit(sheet);
+ excelUtils.book_append_sheet(book,sheet,'Cronograma');
+ excelUtils.book_append_sheet(book,excelUtils.aoa_to_sheet([['Não importar esta aba'],['Outros registros']]),'Referência');
+ return Buffer.from(writeExcel(book,{bookType,type:'buffer'}));
+}
+for(const extension of ['xls','xlsx']) {
+ test(`Cronograma ${extension}: números formatados, acentos, primeira aba, fontes e pró-labore mensal`,async()=>{
+  const bytes=excelFixture(extension,undefined,sheet=>{sheet.D2.z='"R$ "#,##0.00';});
+  const result=spreadsheetCsv(bytes,'cronograma.'+extension),rows=csvRecords(result.csv);
+  assert.equal(result.sheetName,'Cronograma');assert.equal(rows.length,3);assert.equal(rows[1][3],'1234.56');assert.equal(rows[1][2],'Pesquisa, teste; revisão\nSegunda linha');
+  const f=await fixture();
+  const imports=rows.slice(1).map(r=>({rubric:r[0],source:r[1],activity:r[2],value:Number(r[3]),month:r[4],year:Number(r[5]),monthsCount:Number(r[6])}));
+  const response=await f.call('schedule/import','POST',{projectId:f.projectId,rows:imports});assert.equal(response.status,201);
+  const state=(await f.call('state')).data;assert.equal(state.schedule.length,3);assert.equal(state.schedule[0].value,1234.56);assert.equal(state.schedule[1].source,'Contrapartida');assert.equal(state.schedule[2].month,'Março');assert.equal(state.schedule[1].rubric,'Pessoal / Pró-labore');
+  const invalid=await f.call('schedule/import','POST',{projectId:f.projectId,rows:[...imports,{...imports[0],value:10000}]});assert.equal(invalid.status,422);assert.equal((await f.call('state')).data.schedule.length,3);f.db.close();
+ });
+ test(`Documentos ${extension}: upload, nome, MIME, bytes preservados, substituição e restrição aos documentos gerais`,async()=>{
+  const f=await fixture(),bytes=excelFixture(extension),name='orçamento.'+extension;
+  const added=await f.call('projectDocuments','POST',{projectId:f.projectId,name:'Orçamento original'},{files:{project:bytes},fileNames:{project:name}});assert.equal(added.status,201);
+  const expected=extension==='xls'?'application/vnd.ms-excel':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+  assert.equal(added.data.mime,expected);assert.equal(added.data.filename,name);
+  assert.deepEqual(Buffer.from(f.db.prepare('SELECT bytes FROM projectDocuments WHERE id=?').get(added.data.id).bytes),bytes);
+  const download=await f.call('projectDocuments/'+added.data.id);assert.equal(download.response.headers.get('content-type'),expected);assert.equal(Number(download.response.headers.get('content-length')),bytes.length);
+  const replacement=excelFixture(extension,[['Dados'],['Revisão']]);assert.equal((await f.call('projectDocuments/'+added.data.id,'PATCH',{version:1,name:'Planilha revisada'},{files:{project:replacement},fileNames:{project:name}})).status,200);
+  assert.deepEqual(Buffer.from(f.db.prepare('SELECT bytes FROM projectDocuments WHERE id=?').get(added.data.id).bytes),replacement);
+  await f.call('schedule','POST',{...schedule,projectId:f.projectId,rubric:expense.rubric,value:1000});
+  assert.equal((await f.call('expenses','POST',{...expense,projectId:f.projectId},{files:{invoice:bytes},fileNames:{invoice:name}})).status,422);
+  assert.equal((await f.call('projectDocuments','POST',{projectId:f.projectId,name:'Falso'},{files:{project:'a,b,c\n1,2,3'},fileNames:{project:name}})).status,422);
+  f.db.close();
+ });
+}
+test('Planilhas rejeitam fórmulas, conteúdo renomeado, arquivos corrompidos, abas vazias e limite de linhas',()=>{
+ assert.throws(()=>spreadsheetCsv(Buffer.from('rubrica;valor\nTeste;10'),'falso.xls'),/inválido/);
+ assert.throws(()=>spreadsheetCsv(Buffer.from([0x50,0x4b,0x03,0x04]),'corrompido.xlsx'),/íntegro/);
+ assert.throws(()=>spreadsheetCsv(excelFixture('xlsx',undefined,s=>{s.D2={t:'n',f:'100+200',v:300};}),'formula.xlsx'),/fórmulas/);
+ assert.throws(()=>spreadsheetCsv(excelFixture('xlsx',[]),'vazia.xlsx'),/vazia/);
+ assert.throws(()=>spreadsheetCsv(excelFixture('xlsx',Array.from({length:2002},(_,i)=>[String(i)])),'grande.xlsx'),/2.000/);
+});
+test('Órgão concedente personalizado persiste no projeto e no relatório',async()=>{
+ const f=await fixture();
+ const data={companyId:f.company.id,name:'Projeto municipal',code:'MUN-01',agency:'Secretaria Municipal de Ciência e Tecnologia',startDate:'2026-01-01',endDate:'2027-12-31',approved:5000,counterpart:1000,installments:1};
+ const result=await f.call('projects','POST',data);assert.equal(result.status,201);
+ assert.equal((await f.call('state')).data.projects.find(p=>p.id===result.data.id).agency,data.agency);
+ assert.equal((await f.call('reports/'+result.data.id+'?format=json')).data.project.agency,data.agency);
+ assert.equal((await f.call('projects','POST',{...data,code:'MUN-02',agency:'   '})).status,422);f.db.close();
 });
