@@ -90,6 +90,11 @@ function assertPlan(db,projectId,before) {
     for(const name of names)check(availableRubric(db,projectId,name,undefined,source)>=Math.min(0,before?.[source]?.available?.[name] ?? 0),`O planejamento de ${name} (${source}) não pode ficar abaixo do valor já executado.`);
   }
 }
+function scheduledExpenseRubric(db,projectId,item) {
+  const name=canonicalRubric(db,projectId,item.rubric);
+  check(rows(db,'schedule',projectId).some(s=>rubricName(s)===name&&sourceOf(s)===sourceOf(item)),`Cadastre a rubrica ${name} no Cronograma com a fonte ${sourceOf(item)} antes de registrar esta despesa.`);
+  return name;
+}
 function assertExpense(db,projectId,item,excludeId) {
   const source=sourceOf(item);
   check(availableRubric(db,projectId,item.rubric,excludeId,source)>=cents(item.value),'Saldo insuficiente na rubrica e fonte selecionadas. Cadastre ou ajuste sua previsão no cronograma.');
@@ -307,7 +312,7 @@ export function createApplication(db,{origin=process.env.APP_ORIGIN || 'http://l
             const all=[...rubrics,...rows(db,'rubrics',data.projectId).map(r=>r.name),...rows(db,'schedule',data.projectId).map(rubricName)];
             check(!all.some(n=>normalized(n)===normalized(item.name)),'Esta rubrica já está cadastrada.',409);
           }
-          if(entity==='expenses'){item.rubric=canonicalRubric(db,data.projectId,item.rubric);if(!item.draft)assertExpense(db,data.projectId,item);}
+          if(entity==='expenses'){item.rubric=scheduledExpenseRubric(db,data.projectId,item);if(!item.draft)assertExpense(db,data.projectId,item);}
           const before=entity==='remaps'?planBaseline(db,data.projectId):undefined;
           if(entity==='remaps')Object.assign(item,applyRemap(db,user,data.projectId,data));
           if(entity==='schedule') {
@@ -358,11 +363,14 @@ export function createApplication(db,{origin=process.env.APP_ORIGIN || 'http://l
             if(data.action==='edit') {
               next=validate('expenses',{...current,...data,draft:current.draft});
               next.rubric=canonicalRubric(db,current.projectId,next.rubric);
+              // Existing allocations remain editable; changing the rubric or
+              // funding source must select a current schedule allocation.
+              if(next.rubric!==current.rubric||sourceOf(next)!==sourceOf(current))next.rubric=scheduledExpenseRubric(db,current.projectId,next);
               if(!next.draft)assertExpense(db,current.projectId,next,current.id);
               // Editing a reconciled expense requires a new bank check.
               next.status=next.draft?'Pendente':'Em análise';
             } else if(data.action==='submit') {
-              check(current.draft,'A despesa já foi registrada.',409);assertExpense(db,current.projectId,current,current.id);next.draft=false;next.status='Em análise';
+              check(current.draft,'A despesa já foi registrada.',409);scheduledExpenseRubric(db,current.projectId,current);assertExpense(db,current.projectId,current,current.id);next.draft=false;next.status='Em análise';
             } else {
               check(sourceOf(current)==='Subvenção','A conciliação bancária está disponível apenas para a conta de subvenção.');check(user.role==='admin','A conciliação exige administrador.',403);check(!current.draft,'Registre a despesa antes de conferir.');next.bankReference=text(data.bankReference,'Referência do extrato',200);next.status='Conciliado';
             }

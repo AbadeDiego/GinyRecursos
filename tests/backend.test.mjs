@@ -10,6 +10,7 @@ import {backup} from 'node:sqlite';
 import {openDatabase} from '../server/database.mjs';
 import {createUser} from '../server/auth.mjs';
 import {createApplication} from '../server/application.mjs';
+import {validate} from '../server/validation.mjs';
 import {csvRecords} from '../lib/csv.mjs';
 
 const origin='http://localhost:3000';
@@ -39,6 +40,13 @@ const schedule={item:'Plataforma web',activity:'Programar e validar os módulos.
 const budgetRow={fonte:'Subvenção',elemento:'Material de Consumo',descricao:'Insumos',unitario:1000,qtd:5,valorTotal:5000};
 const expense={supplier:'Fornecedor',description:'Compra de insumos',rubric:'Material de Consumo',date:'2026-09-23',value:100.10};
 const pdf='%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF';
+// Simulate expenses already stored before schedule membership was required.
+function legacyExpense(f,data) {
+  const id=randomUUID(),item=validate('expenses',{...expense,...data});
+  f.db.prepare('INSERT INTO expenses(id,project_id,data,value_cents) VALUES(?,?,?,?)').run(id,f.projectId,JSON.stringify(item),Math.round(item.value*100));
+  return {...item,id,projectId:f.projectId,version:1};
+}
+
 
 test('Login obrigatório, CSRF, senha incorreta, logout e sessão revogada',async()=>{
   const f=await fixture();
@@ -89,6 +97,7 @@ test('Idempotência evita duplicação e rejeita a reutilização com outro cont
 test('Despesas, anexos reais, finalização de rascunho e conferência financeira',async()=>{
   const f=await fixture(),projectId=f.projectId;
   await f.call('budget/import','POST',{projectId,rows:[budgetRow]});
+  assert.equal((await f.call('schedule','POST',{...schedule,projectId,rubric:expense.rubric,value:5000})).status,201);
   const created=(await f.call('expenses','POST',{...expense,projectId,draft:true})).data;
   assert.equal((await f.call('state')).data.projects[0].executed,0);
   const upload=await f.call('expenses/'+created.id+'/documents','POST',{}, {files:{invoice:pdf,payment:pdf}});assert.equal(upload.status,201);
@@ -101,12 +110,14 @@ test('Despesas, anexos reais, finalização de rascunho e conferência financeir
 });
 test('Envio multipart repetido não duplica documentos nem despesa',async()=>{
   const f=await fixture(),projectId=f.projectId,key=randomUUID();await f.call('budget/import','POST',{projectId,rows:[budgetRow]});
+  assert.equal((await f.call('schedule','POST',{...schedule,projectId,rubric:expense.rubric,value:5000})).status,201);
   const data={...expense,projectId};const options={key,files:{invoice:pdf,payment:pdf}};
   const a=await f.call('expenses','POST',data,options),b=await f.call('expenses','POST',data,options);
   assert.equal(a.status,201);assert.equal(b.status,201);assert.equal(a.data.id,b.data.id);assert.equal((await f.call('state')).data.expenses.length,1);f.db.close();
 });
 test('Bloqueia documentos falsos, limites de upload e despesa acima do orçamento',async()=>{
   const f=await fixture(),projectId=f.projectId;await f.call('budget/import','POST',{projectId,rows:[budgetRow]});
+  assert.equal((await f.call('schedule','POST',{...schedule,projectId,rubric:expense.rubric,value:5000})).status,201);
   assert.equal((await f.call('expenses','POST',{...expense,projectId},{files:{invoice:'<script>bad</script>',payment:pdf}})).status,422);
   assert.equal((await f.call('expenses','POST',{...expense,projectId,value:5001},{files:{invoice:pdf,payment:pdf}})).status,422);
   assert.equal((await f.call('expenses','POST',{...expense,projectId},{files:{invoice:pdf+'x'.repeat(10*1024*1024),payment:pdf}})).status,422);
@@ -145,7 +156,8 @@ test('Links bloqueiam javascript e exportação CSV neutraliza fórmulas',async(
   const f=await fixture(),projectId=f.projectId;
   assert.equal((await f.call('links','POST',{projectId,name:'Portal',url:'javascript:alert(1)'})).status,422);
   assert.equal((await f.call('links','POST',{projectId,name:'Portal',url:'https://example.com'})).status,201);
-  await f.call('expenses','POST',{...expense,projectId,draft:true,supplier:'=1+1'});
+  assert.equal((await f.call('schedule','POST',{...schedule,projectId,rubric:expense.rubric,value:500})).status,201);
+  assert.equal((await f.call('expenses','POST',{...expense,projectId,draft:true,supplier:'=1+1'})).status,201);
   const csv=await f.call('reports/'+projectId);assert.match(csv.data,/'=1\+1/);assert.match(csv.data,/100,10/);f.db.close();
 });
 test('Isolamento entre projetos e ausência de registros demonstrativos',async()=>{
@@ -203,6 +215,7 @@ test('Rubricas personalizadas, contrapartida e planejamento controlam o saldo',a
   assert.equal((await f.call('expenses','POST',{...expense,projectId,rubric:'Licenças de software'})).status,422);
   assert.equal((await f.call('schedule','POST',{...schedule,projectId,rubric:'Licenças de software',value:500})).status,201);
   assert.equal((await f.call('expenses','POST',{...expense,projectId,rubric:'Licenças de software',value:500})).status,201);
+  assert.equal((await f.call('schedule','POST',{...schedule,projectId,rubric:'Contrapartida',source:'Contrapartida',value:2000})).status,201);
   assert.equal((await f.call('expenses','POST',{...expense,projectId,rubric:'Contrapartida',value:2000})).status,201);
   assert.equal((await f.call('expenses','POST',{...expense,projectId,rubric:'Contrapartida',value:0.01})).status,422);
   const state=(await f.call('state')).data;assert.equal(state.projects[0].executed,2500);
@@ -285,13 +298,14 @@ test('Fontes separadas na importação, pró-labore, limites e exclusão do cron
  assert.equal(state.schedule.find(s=>s.id===counter.id).source,'Contrapartida');f.db.close();
 });
 
-test('Orçamento importado preserva saldos separados para a mesma rubrica',async()=>{
+test('Orçamento legado preserva saldos separados para despesas já existentes',async()=>{
  const f=await fixture(),projectId=f.projectId;
  const rows=[{...budgetRow,unitario:1000,qtd:1,valorTotal:1000},{...budgetRow,fonte:'Contrapartida',unitario:500,qtd:1,valorTotal:500}];
  assert.equal((await f.call('budget/import','POST',{projectId,rows})).status,201);
- assert.equal((await f.call('expenses','POST',{...expense,projectId,source:'Contrapartida',value:501})).status,422);
- assert.equal((await f.call('expenses','POST',{...expense,projectId,source:'Contrapartida',value:500})).status,201);
- assert.equal((await f.call('expenses','POST',{...expense,projectId,source:'Subvenção',value:1000})).status,201);
+ const own=legacyExpense(f,{source:'Contrapartida',value:500}),sub=legacyExpense(f,{source:'Subvenção',value:1000});
+ assert.equal((await f.call('expenses/'+own.id,'PATCH',{version:1,action:'edit',value:501})).status,422);
+ assert.equal((await f.call('expenses/'+own.id,'PATCH',{version:1,action:'edit',description:'Correção contrapartida'})).status,200);
+ assert.equal((await f.call('expenses/'+sub.id,'PATCH',{version:1,action:'edit',description:'Correção subvenção'})).status,200);
  assert.equal((await f.call('budget/import','POST',{projectId,rows:[rows[0]]})).status,422);
  const report=(await f.call('reports/'+projectId+'?format=json')).data;assert.equal(report.planning.length,2);assert.equal(report.project.executed,1500);f.db.close();
 });
@@ -579,7 +593,7 @@ test('Cadastro permite corrigir excesso legado sem bloquear metadados e rejeita 
 test('Edição de limites protege recursos, despesas de contrapartida e parcelas já recebidas',async()=>{
   const f=await fixture(),projectId=f.projectId;
   for(const item of [{kind:'Parcela da subvenção',installment:2,value:3000},{kind:'Contrapartida financeira',value:500},{kind:'Rendimento de aplicação',value:5000}])assert.equal((await f.call('resources','POST',{...item,projectId,date:'2026-09-01'})).status,201);
-  assert.equal((await f.call('expenses','POST',{...expense,projectId,rubric:'Contrapartida',value:800})).status,201);
+  legacyExpense(f,{rubric:'Contrapartida',value:800});
   for(const data of [{approved:2999},{counterpart:799},{installments:1}])assert.equal((await f.call('projects/'+projectId,'PATCH',{version:1,...data})).status,422);
   const updated=await f.call('projects/'+projectId,'PATCH',{version:1,approved:3000,counterpart:800});assert.equal(updated.status,200);assert.equal(updated.data.counterpartRealized,500);assert.equal(updated.data.executedCounterpart,800);
   f.db.close();
@@ -593,4 +607,42 @@ test('Cadastro valida campos, duplicidade e empresa, e usuário de consulta não
   const login=await f.call('auth/login','POST',{email:'viewer-project@test.example',password:admin.password}),cookie=login.response.headers.get('set-cookie').split(';')[0];
   assert.equal((await f.call(path,'PATCH',{version:1,name:'Proibido'},{headers:{cookie}})).status,403);
   assert.equal((await f.call('state')).data.projects[0].version,1);f.db.close();
+});
+
+test('Novos lançamentos e rascunhos exigem rubrica no Cronograma da mesma fonte e projeto',async()=>{
+ const f=await fixture(),projectId=f.projectId;
+ await f.call('rubrics','POST',{projectId,name:'Licença especial',type:'Custeio'});
+ await f.call('budget/import','POST',{projectId,rows:[budgetRow]});
+ for(const rubric of ['Material de Consumo','Licença especial','Contrapartida'])for(const draft of [true,false]){
+  const r=await f.call('expenses','POST',{...expense,projectId,rubric,draft});assert.equal(r.status,422);assert.match(r.data.error,/Cronograma/);
+ }
+ const second=(await f.call('projects','POST',{...f.project,code:'OUTRO'})).data;
+ assert.equal((await f.call('schedule','POST',{...schedule,projectId:second.id,rubric:'Licença especial',value:500})).status,201);
+ assert.equal((await f.call('expenses','POST',{...expense,projectId,rubric:'Licença especial',draft:true})).status,422);
+ assert.equal((await f.call('schedule/import','POST',{projectId,rows:[{...schedule,rubric:'Licença especial',source:'Contrapartida',value:500}]})).status,201);
+ assert.equal((await f.call('expenses','POST',{...expense,projectId,rubric:'Licença especial',source:'Subvenção',draft:true})).status,422);
+ const created=await f.call('expenses','POST',{...expense,projectId,rubric:'Licença especial',source:'Contrapartida'});assert.equal(created.status,201);
+ assert.equal((await f.call('expenses/'+created.data.id,'PATCH',{version:1,action:'edit',source:'Subvenção'})).status,422);
+ assert.equal((await f.call('expenses/'+created.data.id,'PATCH',{version:1,action:'edit',rubric:'Material de Consumo',source:'Subvenção'})).status,422);
+ assert.equal((await f.call('state')).data.expenses.length,1);f.db.close();
+});
+test('Rascunho exige previsão vigente ao registrar e mudança de rubrica usa o Cronograma',async()=>{
+ const f=await fixture(),projectId=f.projectId;
+ const row=(await f.call('schedule','POST',{...schedule,projectId,rubric:expense.rubric,value:500})).data;
+ const draft=(await f.call('expenses','POST',{...expense,projectId,draft:true})).data;assert.ok(draft.id);
+ assert.equal((await f.call('schedule/'+row.id,'DELETE',{version:1})).status,200);
+ const rejected=await f.call('expenses/'+draft.id,'PATCH',{version:1,action:'submit'});assert.equal(rejected.status,422);assert.match(rejected.data.error,/Cronograma/);
+ assert.equal((await f.call('schedule','POST',{...schedule,projectId,rubric:'Consultoria',value:500})).status,201);
+ assert.equal((await f.call('expenses/'+draft.id,'PATCH',{version:1,action:'edit',rubric:'Consultoria'})).status,200);
+ assert.equal((await f.call('expenses/'+draft.id,'PATCH',{version:2,action:'submit'})).status,200);
+ assert.equal((await f.call('state')).data.projects[0].executed,100.10);f.db.close();
+});
+test('Despesas antigas permanecem editáveis sem liberar a mesma rubrica para novos lançamentos',async()=>{
+ const f=await fixture(),projectId=f.projectId;
+ await f.call('budget/import','POST',{projectId,rows:[budgetRow]});
+ const old=legacyExpense(f,{value:200});
+ const edited=await f.call('expenses/'+old.id,'PATCH',{version:1,action:'edit',supplier:'Fornecedor corrigido',value:150});assert.equal(edited.status,200);
+ assert.equal((await f.call('expenses','POST',{...expense,projectId})).status,422);
+ assert.equal((await f.call('expenses/'+old.id,'PATCH',{version:2,action:'reconcile',bankReference:'PIX'})).status,200);
+ assert.equal((await f.call('state')).data.projects[0].executed,150);f.db.close();
 });

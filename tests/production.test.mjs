@@ -50,6 +50,8 @@ test('Produção standalone: autenticação, cookies, CRUD, anexos e reinício',
   assert.equal((await call('team/'+member.id,'PATCH',{...member,name:'Ana atualizada'})).status,200);
   assert.equal((await call('schedule/import','POST',{projectId:project.id,rows:[{item:'Web',activity:'Desenvolver plataforma',month:'Janeiro',value:500,status:'Em andamento'}]})).status,201);
   assert.equal((await call('budget/import','POST',{projectId:project.id,rows:[{fonte:'Subvenção',elemento:'Material de Consumo',descricao:'Insumos',unitario:1000,qtd:1,valorTotal:1000}]})).status,201);
+  assert.equal((await call('expenses','POST',{projectId:project.id,supplier:'Fornecedor',description:'Sem previsão',rubric:'Material de Consumo',value:100,date:'2026-09-23',draft:true})).status,422);
+  assert.equal((await call('schedule','POST',{projectId:project.id,rubric:'Material de Consumo',activity:'Insumos',month:'Janeiro',value:1000})).status,201);
   const bytes='%PDF-1.4\n%%EOF';
   const workbook=excelUtils.book_new();excelUtils.book_append_sheet(workbook,excelUtils.aoa_to_sheet([['Rubrica','Valor'],['Consultoria',1500.25]]),'Cronograma');
   const spreadsheetBytes=Buffer.from(writeExcel(workbook,{type:'buffer',bookType:'xls'}));

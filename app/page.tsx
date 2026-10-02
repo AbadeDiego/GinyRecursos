@@ -568,7 +568,7 @@ function Workspace({initial,onLogout}: {initial: State;onLogout:()=>void}) {
           {view === "companies" && <CompaniesView companies={companyList} projects={projectList} selectedCompanyId={profileCompanyId} activeProjectId={projectId} onSelectCompany={setProfileCompanyId} onNewCompany={() => setCompanyModalOpen(true)} onNewProject={startProjectCreation} onSwitchProject={switchProject} />}
           {view === "team" && <TeamView project={activeProject} members={activeTeamMembers} onImport={() => setTeamImportOpen(true)} onAdd={() => setTeamMemberCreateOpen(true)} onEdit={setEditingTeamMember} onDelete={setTeamMemberToDelete} />}
           {view === "schedule" && <ScheduleView onAdd={()=>setScheduleCreateOpen(true)} project={activeProject} items={activeScheduleItems} onImport={() => setScheduleImportOpen(true)} onEdit={setEditingScheduleItem} />}
-          {view === "entries" && <Entries projectId={activeProject.id} entries={projectEntries} openEntry={setSelectedExpense} newEntry={() => setNewEntryOpen(true)} rubrics={rubricOptions} onAddRubric={()=>setRubricCreateOpen(true)} onEdit={setEditingExpense} onDelete={setDeletingExpense} />}
+          {view === "entries" && <Entries projectId={activeProject.id} entries={projectEntries} openEntry={setSelectedExpense} newEntry={() => setNewEntryOpen(true)} rubrics={rubricOptions} onEdit={setEditingExpense} onDelete={setDeletingExpense} />}
           {view === "resources" && <Resources project={activeProject} resources={resources.filter(r=>r.projectId===activeProject.id)} onAdd={()=>setResourceEntryOpen(true)} onEdit={setEditingResource} onDelete={r=>setDeletion({entity:"resources",id:r.id,version:r.version,title:"Excluir recurso?",description:`${r.kind} · ${money(r.value)}. O registro e seus comprovantes serão excluídos e os saldos serão recalculados.`})} />}
           {view === "reconciliation" && <Reconciliation project={activeProject} entries={projectEntries} resources={resources.filter(r=>r.projectId===activeProject.id)} />}
           {view === "remaps" && <Remaps project={activeProject} remaps={remaps.filter(r=>r.projectId===activeProject.id)} onEdit={setEditingRemap} onDelete={r=>setDeletion({entity:"remaps",id:r.id,version:r.version,title:"Excluir remanejamento?",description:"O valor será devolvido à origem e a previsão criada no destino será removida. A operação será bloqueada se comprometer despesas já registradas ou remanejamentos posteriores."})} openModal={() => setRemapOpen(true)} />}
@@ -578,7 +578,7 @@ function Workspace({initial,onLogout}: {initial: State;onLogout:()=>void}) {
         </div>
       </main>
 
-      {newEntryOpen && <NewEntryModal rubrics={rubricOptions} onAddRubric={()=>setRubricCreateOpen(true)} onClose={() => setNewEntryOpen(false)} onSave={addEntry} showToast={showToast} />}
+      {newEntryOpen && <NewEntryModal schedule={activeScheduleItems} onOpenSchedule={()=>{setNewEntryOpen(false);navigate("schedule");}} onClose={() => setNewEntryOpen(false)} onSave={addEntry} showToast={showToast} />}
       {deletion && <DeleteRecordModal title={deletion.title} description={deletion.description} onClose={()=>setDeletion(null)} onConfirm={confirmDeletion}/>}
       {editingResource && <ResourceEntryModal initial={editingResource} project={activeProject} onClose={()=>setEditingResource(null)} onSave={editResourceEntry}/>}
       {resourceEntryOpen && <ResourceEntryModal project={activeProject} onClose={() => setResourceEntryOpen(false)} onSave={addResourceEntry} />}
@@ -595,7 +595,7 @@ function Workspace({initial,onLogout}: {initial: State;onLogout:()=>void}) {
       {editingTeamMember && <TeamMemberEditModal member={editingTeamMember} onClose={() => setEditingTeamMember(null)} onSave={saveTeamMember} />}
       {teamMemberToDelete && <DeleteTeamMemberModal member={teamMemberToDelete} onClose={() => setTeamMemberToDelete(null)} onConfirm={deleteTeamMember} />}
       {rubricCreateOpen && <RubricModal onClose={()=>setRubricCreateOpen(false)} onSave={createRubric}/>}
-      {editingExpense && <NewEntryModal initial={editingExpense} rubrics={rubricOptions} onAddRubric={()=>setRubricCreateOpen(true)} onClose={()=>setEditingExpense(null)} onSave={editExpense} showToast={showToast}/>}
+      {editingExpense && <NewEntryModal initial={editingExpense} schedule={activeScheduleItems} onOpenSchedule={()=>{setEditingExpense(null);navigate("schedule");}} onClose={()=>setEditingExpense(null)} onSave={editExpense} showToast={showToast}/>}
       {deletingExpense && <DeleteExpenseModal expense={deletingExpense} onClose={()=>setDeletingExpense(null)} onConfirm={()=>deleteExpense(deletingExpense)}/>}
       {scheduleCreateOpen && <ScheduleItemEditModal project={activeProject} rubrics={rubricOptions} onAddRubric={()=>setRubricCreateOpen(true)} onClose={()=>setScheduleCreateOpen(false)} onSave={createScheduleItem}/>}
       {editingScheduleItem && <ScheduleItemEditModal project={activeProject} rubrics={rubricOptions} onAddRubric={()=>setRubricCreateOpen(true)} item={editingScheduleItem} onClose={() => setEditingScheduleItem(null)} onSave={saveScheduleItem} onDelete={()=>setDeletion({entity:"schedule",id:editingScheduleItem.id,version:editingScheduleItem.version,title:"Excluir previsão?",description:`${editingScheduleItem.activity} · ${money(editingScheduleItem.value)}. A exclusão recalcula o planejamento e não pode comprometer despesas já registradas.`})} />}
@@ -775,15 +775,13 @@ function ProjectModal({
   const [companyId, setCompanyId] = useState(initialCompanyId);
   const [name, setName] = useState(initial?.name || "");
   const [code, setCode] = useState(initial?.code || "");
-  const [agency, setAgency] = useState(initial?.agency && !["FINEP","EMBRAPII","FACEPE","CNPq","BNDES"].includes(initial.agency) ? "Outro" : initial?.agency || "FINEP");
-  const [customAgency,setCustomAgency]=useState(initial?.agency || "");
-  const resolvedAgency=agency==="Outro"?customAgency.trim():agency;
+  const [agency, setAgency] = useState(initial?.agency || "");
   const [startDate, setStartDate] = useState(initial?.startDate || "");
   const [endDate, setEndDate] = useState(initial?.endDate || "");
   const [approved, setApproved] = useState(initial ? String(initial.approved) : "");
   const [counterpart, setCounterpart] = useState(initial ? String(initial.counterpart) : "");
   const [installments, setInstallments] = useState(String(initial?.installments || 4));
-  const valid = Boolean(companyId && name.trim() && code.trim() && resolvedAgency && startDate && endDate && endDate >= startDate && Number.isFinite(Number(approved)) && Number(approved) > 0 && Number.isFinite(Number(counterpart)) && Number(counterpart) >= 0 && Number(installments) > 0);
+  const valid = Boolean(companyId && name.trim() && code.trim() && agency.trim() && startDate && endDate && endDate >= startDate && Number.isFinite(Number(approved)) && Number(approved) > 0 && Number.isFinite(Number(counterpart)) && Number(counterpart) >= 0 && Number(installments) > 0);
   const company = companies.find((item) => item.id === companyId);
 
   return (
@@ -801,8 +799,7 @@ function ProjectModal({
             <label className="field full"><span>Empresa beneficiária *</span><select disabled={Boolean(initial)} value={companyId} onChange={(event) => setCompanyId(event.target.value)}>{companies.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
             <label className="field full"><span>Nome do projeto *</span><input maxLength={500} value={name} onChange={(event) => setName(event.target.value)} placeholder="Título oficial do projeto aprovado" /></label>
             <label className="field"><span>Número do termo de outorga / convênio *</span><input maxLength={80} value={code} onChange={(event) => setCode(event.target.value)} placeholder="Ex.: SUBV-2026-001" /></label>
-            <label className="field"><span>Órgão concedente *</span><select value={agency} onChange={(event) => setAgency(event.target.value)}><option>FINEP</option><option>EMBRAPII</option><option>FACEPE</option><option>CNPq</option><option>BNDES</option><option value="Outro">Outros</option></select></label>
-            {agency==="Outro"&&<label className="field full"><span>Nome do órgão concedente *</span><input autoFocus maxLength={100} value={customAgency} onChange={e=>setCustomAgency(e.target.value)} placeholder="Digite o nome do órgão concedente"/></label>}
+            <label className="field"><span>Órgão concedente *</span><input required maxLength={100} value={agency} onChange={event=>setAgency(event.target.value)} placeholder="Digite o nome do órgão concedente" /></label>
             <label className="field"><span>Início da vigência *</span><input type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} /></label>
             <label className="field"><span>Fim da vigência *</span><input type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} /></label>
           </div>
@@ -814,7 +811,7 @@ function ProjectModal({
           </div>
           <div className="project-create-note"><ShieldCheck size={17} /><span>{initial ? <>As alterações mantêm os lançamentos e documentos do projeto. Para reduzir os valores, ajuste antes as previsões que ultrapassem o novo limite; recursos recebidos e despesas executadas continuam protegidos.</> : <><strong>O projeto será criado como “A iniciar”.</strong> Depois você poderá importar as rubricas, registrar as parcelas e anexar o instrumento aprovado.</>}</span></div>
         </div>
-        <div className="modal-footer"><button className="secondary-button" onClick={onClose}>Cancelar</button><button className="primary-button" disabled={!valid} onClick={() => onSave({ companyId, name, code, agency:resolvedAgency, startDate, endDate, approved: Number(approved), counterpart: Number(counterpart) || 0, installments: Number(installments) })}>{initial ? <>Salvar alterações <Check size={17} /></> : <>Criar e acessar projeto <Rocket size={17} /></>}</button></div>
+        <div className="modal-footer"><button className="secondary-button" onClick={onClose}>Cancelar</button><button className="primary-button" disabled={!valid} onClick={() => onSave({ companyId, name, code, agency:agency.trim(), startDate, endDate, approved: Number(approved), counterpart: Number(counterpart) || 0, installments: Number(installments) })}>{initial ? <>Salvar alterações <Check size={17} /></> : <>Criar e acessar projeto <Rocket size={17} /></>}</button></div>
       </div>
     </div>
   );
@@ -994,13 +991,13 @@ function Entries({
   entries,
   openEntry,
   newEntry,
-  rubrics, onAddRubric, onEdit, onDelete,
+  rubrics, onEdit, onDelete,
   projectId,
 }: {
   entries: Expense[];
   openEntry: (expense: Expense) => void;
   newEntry: () => void;
-  rubrics:RubricOption[]; onAddRubric:()=>void; onEdit:(e:Expense)=>void; onDelete:(e:Expense)=>void;
+  rubrics:RubricOption[]; onEdit:(e:Expense)=>void; onDelete:(e:Expense)=>void;
   projectId: string;
 }) {
   const [query, setQuery] = useState("");
@@ -1013,7 +1010,6 @@ function Entries({
   const total = filtered.filter(e=>!e.draft).reduce((sum, entry) => sum + Math.round(entry.value*100), 0)/100;
   return (
     <>
-      <div className="expense-actions" style={{marginBottom:16}}><button className="secondary-button" onClick={onAddRubric}><Plus size={16}/> Adicionar rubrica</button></div>
       <section className="summary-strip">
         <div><span>Despesas no filtro (sem rascunhos)</span><strong>{money(total)}</strong></div>
         <div><span>Lançamentos conciliados</span><strong>{entries.filter((entry) => entry.status === "Conciliado").length}</strong><small>de {entries.length} registros</small></div>
@@ -1943,30 +1939,33 @@ type ExpenseDraft = Pick<Expense,"source"|"supplier"|"description"|"rubric"|"val
 function NewEntryModal({
   onClose,
   onSave,
-  initial, rubrics, onAddRubric,
+  initial, schedule, onOpenSchedule,
   showToast,
 }: {
   onClose: () => void;
   onSave: (entry: ExpenseDraft, draft: boolean, files: Record<string,File>) => void;
-  initial?:Expense; rubrics:RubricOption[]; onAddRubric:()=>void;
+  initial?:Expense; schedule:ScheduleItem[]; onOpenSchedule:()=>void;
   showToast: (message: string) => void;
 }) {
   const [step, setStep] = useState(1);
-  const [rubric, setRubric] = useState(initial?.rubric || "Material de Consumo");
-  const [source,setSource]=useState<FundingSource>(initial?sourceOf(initial):"Subvenção");
+  const [rubric, setRubric] = useState(initial?.rubric || "");
+  const [source,setSource]=useState<FundingSource>(initial?sourceOf(initial):schedule.some(s=>sourceOf(s)==="Subvenção")?"Subvenção":schedule.length?sourceOf(schedule[0]):"Subvenção");
   const [supplier, setSupplier] = useState(initial?.supplier || "");
   const [description, setDescription] = useState(initial?.description || "");
   const [value, setValue] = useState(initial?String(initial.value):"");
   const [files, setFiles] = useState<Record<string, File>>({});
   const [date,setDate]=useState(initial?.date || new Date().toLocaleDateString("en-CA")),[taxId,setTaxId]=useState(initial?.taxId||""),[notes,setNotes]=useState(initial?.notes||"");
   const requiredKeys = ["quote1", "quote2", "quote3", "invoice", "payment"];
-  const firstStepComplete = Boolean(supplier.trim() && description.trim() && rubric && date && Number(value) > 0);
+  const scheduledRubrics=Array.from(new Set(schedule.filter(item=>sourceOf(item)===source).map(item=>item.rubric||item.item)));
+  const legacyRubric=initial && source===sourceOf(initial) && !scheduledRubrics.includes(initial.rubric) ? initial.rubric : "";
+  const allowedRubric=scheduledRubrics.includes(rubric)||Boolean(legacyRubric && rubric===legacyRubric);
+  const firstStepComplete = Boolean(supplier.trim() && description.trim() && allowedRubric && date && Number(value) > 0);
 
   const setFile = (key: string, file?: File) => {
     if (file) setFiles((current) => ({ ...current, [key]: file }));
   };
   const save = (draft: boolean) => {
-    if (!supplier || !description || !value) {
+    if (!firstStepComplete) {
       showToast("Preencha os dados básicos antes de salvar.");
       return;
     }
@@ -1982,7 +1981,10 @@ function NewEntryModal({
         </div>
         {step === 1 ? (
           <div className="modal-body form-grid">
-            <div className="field full"><span>Rubrica *</span><RubricPicker value={rubric} onChange={setRubric} rubrics={rubrics} onAdd={onAddRubric}/><small>O saldo é definido pela rubrica e pela fonte no cronograma. Selecione a fonte usada para pagar esta despesa.</small></div>
+            <SourceField value={source} onChange={next=>{setSource(next);setRubric("");}}/>
+            <label className="field full"><span>Rubrica *</span><select required value={rubric} onChange={event=>setRubric(event.target.value)}><option value="">Selecione uma rubrica do Cronograma</option>{scheduledRubrics.map(name=><option key={name} value={name}>{name}</option>)}{legacyRubric&&<option value={legacyRubric}>{legacyRubric} — lançamento existente</option>}</select><small>Rubricas previstas no Cronograma para {source}. O saldo considera esta fonte de recursos.</small></label>
+            {!scheduledRubrics.length&&<div className="document-pending-alert full"><AlertCircle size={18}/><div><strong>Nenhuma rubrica prevista para {source}.</strong><p>Cadastre uma previsão no Cronograma antes de criar um lançamento com esta fonte.</p><button type="button" className="secondary-button small" onClick={onOpenSchedule}>Abrir Cronograma</button></div></div>}
+            {legacyRubric&&<p className="panel-note full">A rubrica deste lançamento antigo foi preservada. Para trocar a rubrica ou registrar novas despesas, cadastre a previsão no Cronograma.</p>}
             {initial?.status==="Conciliado"&&<p className="document-pending-alert full">Ao editar, a despesa voltará para Em análise e precisará de nova conferência bancária.</p>}
             <label className="field"><span>Fornecedor / favorecido *</span><input value={supplier} onChange={(event) => setSupplier(event.target.value)} placeholder="Nome ou razão social" /></label>
             <label className="field"><span>CPF / CNPJ</span><input value={taxId} onChange={e=>setTaxId(e.target.value)} placeholder="00.000.000/0000-00" /></label>
