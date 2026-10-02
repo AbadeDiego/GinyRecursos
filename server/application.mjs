@@ -328,6 +328,30 @@ export function createApplication(db,{origin=process.env.APP_ORIGIN || 'http://l
             if(['schedule','remaps'].includes(entity))assertPlan(db,current.projectId,before);
             output={id:current.id};
           }
+          else if(entity==='projects') {
+            check(data.companyId===undefined||data.companyId===current.companyId,'A empresa beneficiária não pode ser alterada nesta edição.');
+            const next=validate('projects',{...current,...data,companyId:current.companyId,status:current.status});
+            check(!rows(db,'projects').some(p=>p.id!==current.id&&p.companyId===current.companyId&&p.code===next.code),'Código de projeto já cadastrado.',409);
+            const baseline=planBaseline(db,current.id),resources=rows(db,'resources',current.id),expenses=rows(db,'expenses',current.id);
+            for(const source of fundingSources) {
+              const field=source==='Subvenção'?'approved':'counterpart',limit=cents(next[field],'',true);
+              if(limit>=cents(current[field],'',true))continue;
+              const received=resources.filter(r=>r.kind===(source==='Subvenção'?'Parcela da subvenção':'Contrapartida financeira')).reduce((sum,r)=>sum+cents(r.value),0);
+              const spent=expenses.filter(e=>!e.draft&&sourceOf(e)===source).reduce((sum,e)=>sum+cents(e.value),0);
+              // The generic counterpart allocation is a residual of the cap,
+              // so evaluate the plan only after applying the proposed values.
+              check(limit>=Math.max(received,spent),`O valor de ${source} não pode ser menor que os recursos recebidos ou as despesas executadas (${brl(Math.max(received,spent))}).`);
+            }
+            const lastInstallment=Math.max(0,...resources.filter(r=>r.kind==='Parcela da subvenção').map(r=>r.installment));
+            check(next.installments>=lastInstallment,`O número de parcelas não pode ser menor que a parcela ${lastInstallment}, já registrada.`);
+            db.prepare('UPDATE projects SET data=?,version=version+1 WHERE id=?').run(JSON.stringify(next),current.id);
+            const proposed=planBaseline(db,current.id);
+            for(const source of fundingSources) {
+              const field=source==='Subvenção'?'approved':'counterpart';
+              if(next[field]<current[field])check(proposed[source].total<=cents(next[field],'',true),`O valor de ${source} não pode ser menor que o planejamento de ${brl(proposed[source].total)}. Ajuste as previsões desta fonte antes de reduzir o valor.`);
+            }
+            assertPlan(db,current.id,baseline);output=projectView(db,record(db,entity,current.id));
+          }
           else if(entity==='expenses') {
             check(['edit','submit','reconcile'].includes(data.action),'Ação inválida.');
             let next={...current};delete next.version;delete next.id;delete next.projectId;

@@ -33,6 +33,7 @@ Ambiente: Node.js 24.19.0, Linux, bancos SQLite temporários. A validação HTTP
 | Excel no cronograma | XLS/XLSX reais, acentos e multilinha, primeira aba, números formatados, fontes e pró-labore; rollback por limite, fórmulas, corrupção, abas vazias e limite de linhas |
 | Excel em documentos | XLS/XLSX, MIME, nome e bytes originais, substituição, download e rejeição de extensão falsa; preservação após backup no teste HTTP |
 | Órgão personalizado | Nome livre persistido no projeto e no relatório, nome vazio rejeitado |
+| Cadastro editável | Nome, termo, órgão, vigência, parcelas e valores; versão, idempotência, duplicidade, perfil consulta, limites por fonte, excesso legado, preservação de anexos e persistência HTTP após reinício |
 | Recursos na Visão Geral | Edição de entradas das duas fontes pela mesma API, com totais recalculados e verificação HTTP |
 | Links editáveis | Nome e URL, protocolos inválidos, conflito de versão e preservação da data original |
 
@@ -42,9 +43,9 @@ Comando reprodutível:
 npm run test:all
 ```
 
-Resultado da execução em 02/10/2026: **46 testes aprovados, zero falhas**, verificação TypeScript e build concluídos.
+Resultado da execução em 02/10/2026: **50 testes aprovados, zero falhas**, verificação TypeScript e build concluídos.
 
-A suíte contém 45 testes de domínio/integração e 1 cenário HTTP de produção com múltiplas verificações. TypeScript e build fazem parte do comando. Arquivos em `tests/backend.test.mjs` e `tests/production.test.mjs`.
+A suíte contém 49 testes de domínio/integração e 1 cenário HTTP de produção com múltiplas verificações. TypeScript e build fazem parte do comando. Arquivos em `tests/backend.test.mjs` e `tests/production.test.mjs`.
 
 ## Homologação no destino
 
@@ -60,5 +61,6 @@ Antes do uso real:
 6. Reiniciar/recriar o contêiner preservando os volumes.
 7. Restaurar um backup em cópia isolada, sem sobrescrever produção.
 8. Conferir responsividade, filtros, valores e permissões por perfil.
+9. Na Visão Geral, abrir Editar projeto, conferir os campos preenchidos, salvar e recarregar. Confirmar ausência de Importar CSV e Novo lançamento no cabeçalho.
 
 Não foram realizados teste de carga, pentest externo ou integração bancária. A instalação atende uma organização com usuários autorizados e vários projetos. Não constitui um SaaS com organizações independentes isoladas.

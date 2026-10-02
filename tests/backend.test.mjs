@@ -544,3 +544,53 @@ test('Órgão concedente personalizado persiste no projeto e no relatório',asyn
  assert.equal((await f.call('reports/'+result.data.id+'?format=json')).data.project.agency,data.agency);
  assert.equal((await f.call('projects','POST',{...data,code:'MUN-02',agency:'   '})).status,422);f.db.close();
 });
+
+test('Edição do cadastro preserva vínculos, documentos, execução e controla versão e idempotência',async()=>{
+  const f=await fixture(),projectId=f.projectId;
+  await f.call('schedule','POST',{...schedule,rubric:'Material de Consumo',projectId});
+  const created=await f.call('expenses','POST',{...expense,projectId},{files:{invoice:pdf}});assert.equal(created.status,201);
+  const before=(await f.call('state')).data;
+  const data={version:1,name:'Projeto atualizado',code:'TERMO-2026',agency:'Fundação Municipal',approved:12000.50,counterpart:3000.25,startDate:'2026-02-01',endDate:'2028-01-31',installments:4},key=randomUUID();
+  const updated=await f.call('projects/'+projectId,'PATCH',data,{key});assert.equal(updated.status,200);assert.equal(updated.data.version,2);
+  assert.deepEqual((await f.call('projects/'+projectId,'PATCH',data,{key})).data,updated.data);
+  assert.equal((await f.call('projects/'+projectId,'PATCH',data)).status,409);
+  const after=(await f.call('state')).data,p=after.projects[0];
+  for(const [field,value] of Object.entries(data))if(field!=='version')assert.equal(p[field],value);
+  assert.equal(p.id,projectId);assert.equal(p.companyId,f.company.id);assert.equal(p.executed,100.10);assert.equal(p.status,'Em execução');
+  assert.deepEqual(after.expenses,before.expenses);assert.deepEqual(after.schedule,before.schedule);
+  assert.equal((await f.call('documents/'+after.expenses[0].documents[0].id)).data,pdf);
+  const report=(await f.call('reports/'+projectId+'?format=json')).data;assert.equal(report.project.name,data.name);assert.equal(report.project.approved,data.approved);
+  assert.equal(f.db.prepare("SELECT count(*) AS n FROM audit WHERE entity='projects' AND action='patch'").get().n,1);
+  f.db.close();
+});
+test('Cadastro permite corrigir excesso legado sem bloquear metadados e rejeita reduções incompatíveis',async()=>{
+  const f=await fixture(),projectId=f.projectId;
+  await f.call('schedule','POST',{...schedule,value:8500,projectId});lowerProjectLimit(f,8000);
+  let result=await f.call('projects/'+projectId,'PATCH',{version:1,name:'Novo nome'});assert.equal(result.status,200);assert.equal(result.data.planningWarnings[0].excess,500);
+  result=await f.call('projects/'+projectId,'PATCH',{version:2,approved:8200});assert.equal(result.status,200);
+  const failed=await f.call('projects/'+projectId,'PATCH',{version:3,approved:8100,name:'Não salvar'});assert.equal(failed.status,422);assert.match(failed.data.error,/planejamento/);
+  assert.equal((await f.call('state')).data.projects[0].name,'Novo nome');assert.equal((await f.call('state')).data.projects[0].version,3);
+  result=await f.call('projects/'+projectId,'PATCH',{version:3,approved:9000});assert.equal(result.status,200);assert.equal(result.data.planningWarnings.length,0);
+  result=await f.call('projects/'+projectId,'PATCH',{version:4,approved:8500});assert.equal(result.status,200);
+  await f.call('schedule','POST',{...schedule,rubric:'Consultoria',source:'Contrapartida',value:1500,projectId});
+  assert.equal((await f.call('projects/'+projectId,'PATCH',{version:5,counterpart:1499})).status,422);
+  assert.equal((await f.call('projects/'+projectId,'PATCH',{version:5,counterpart:1500})).status,200);f.db.close();
+});
+test('Edição de limites protege recursos, despesas de contrapartida e parcelas já recebidas',async()=>{
+  const f=await fixture(),projectId=f.projectId;
+  for(const item of [{kind:'Parcela da subvenção',installment:2,value:3000},{kind:'Contrapartida financeira',value:500},{kind:'Rendimento de aplicação',value:5000}])assert.equal((await f.call('resources','POST',{...item,projectId,date:'2026-09-01'})).status,201);
+  assert.equal((await f.call('expenses','POST',{...expense,projectId,rubric:'Contrapartida',value:800})).status,201);
+  for(const data of [{approved:2999},{counterpart:799},{installments:1}])assert.equal((await f.call('projects/'+projectId,'PATCH',{version:1,...data})).status,422);
+  const updated=await f.call('projects/'+projectId,'PATCH',{version:1,approved:3000,counterpart:800});assert.equal(updated.status,200);assert.equal(updated.data.counterpartRealized,500);assert.equal(updated.data.executedCounterpart,800);
+  f.db.close();
+});
+test('Cadastro valida campos, duplicidade e empresa, e usuário de consulta não pode editar',async()=>{
+  const f=await fixture(),path='projects/'+f.projectId;
+  await f.call('projects','POST',{...f.project,code:'OUTRO'});
+  for(const data of [{name:''},{agency:''},{approved:0},{approved:1.123},{counterpart:-1},{endDate:'2025-01-01'},{installments:49},{companyId:'outra'}])assert.equal((await f.call(path,'PATCH',{version:1,...data})).status,422);
+  assert.equal((await f.call(path,'PATCH',{version:1,code:'OUTRO'})).status,409);
+  createUser(f.db,{...admin,email:'viewer-project@test.example',role:'viewer'});
+  const login=await f.call('auth/login','POST',{email:'viewer-project@test.example',password:admin.password}),cookie=login.response.headers.get('set-cookie').split(';')[0];
+  assert.equal((await f.call(path,'PATCH',{version:1,name:'Proibido'},{headers:{cookie}})).status,403);
+  assert.equal((await f.call('state')).data.projects[0].version,1);f.db.close();
+});

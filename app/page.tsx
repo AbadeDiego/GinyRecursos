@@ -335,6 +335,7 @@ function Workspace({initial,onLogout}: {initial: State;onLogout:()=>void}) {
   const [profileCompanyId, setProfileCompanyId] = useState(initial.projects[0]?.companyId || initial.companies[0]?.id || "");
   const [companyModalOpen, setCompanyModalOpen] = useState(false);
   const [projectModalOpen, setProjectModalOpen] = useState(false);
+  const [editingProject, setEditingProject] = useState<Project | null>(null);
   const [projectModalCompanyId, setProjectModalCompanyId] = useState(initial.projects[0]?.companyId || initial.companies[0]?.id || "");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
@@ -432,6 +433,7 @@ function Workspace({initial,onLogout}: {initial: State;onLogout:()=>void}) {
   };
 
   const createCompany = (company: Omit<Company,"id" | "version">) => commit(async()=>{const saved=await api("companies","POST",company);setProfileCompanyId(saved.id);setProjectModalCompanyId(saved.id);},()=>{setCompanyModalOpen(false);setProjectModalOpen(true);},"Empresa salva. Cadastre o primeiro projeto.");
+  const editProject = (draft: ProjectDraft) => { if(editingProject)void commit(()=>api(`projects/${editingProject.id}`,"PATCH",{...draft,version:editingProject.version}),()=>setEditingProject(null),"Cadastro do projeto atualizado."); };
   const createProject = (draft: ProjectDraft) => commit(async()=>{const saved=await api("projects","POST",draft);setProjectId(saved.id);setCompanyId(saved.companyId);setProfileCompanyId(saved.companyId);},()=>{setProjectModalOpen(false);setView("overview");},"Projeto cadastrado.");
   const navigate = (nextView: View) => {setView(nextView);setSidebarOpen(false);window.scrollTo({top:0,behavior:"smooth"});};
   const addEntry = (entry: ExpenseDraft, draft: boolean, files:Record<string,File>) => commit(()=>api("expenses","POST",{...entry,projectId:activeProject.id,draft},files),()=>{setNewEntryOpen(false);setView("entries");},draft?"Rascunho salvo.":"Despesa registrada.");
@@ -529,8 +531,9 @@ function Workspace({initial,onLogout}: {initial: State;onLogout:()=>void}) {
             <div><span className="eyebrow">{header.eyebrow}</span><h1>{header.title}</h1><p>{header.subtitle}</p></div>
             <div className="heading-actions">
               {view === "reports" && <button className="secondary-button" onClick={() => window.location.assign(`/api/reports/${activeProject.id}`)}><Download size={17} /> Exportar consolidado</button>}
-              {(view === "overview") && <button className="secondary-button" onClick={openCsvImport}><FileSpreadsheet size={17} /> Importar CSV</button>}
-              {view === "companies" ? (
+              {view === "overview" ? (
+                <button className="primary-button" onClick={() => setEditingProject(activeProject)}><Pencil size={17} /> Editar projeto</button>
+              ) : view === "companies" ? (
                 <>
                   <button className="secondary-button" onClick={() => startProjectCreation(profileCompanyId)}><Rocket size={17} /> Novo projeto</button>
                   <button className="primary-button" onClick={() => setCompanyModalOpen(true)}><Plus size={18} /> Nova empresa</button>
@@ -561,7 +564,7 @@ function Workspace({initial,onLogout}: {initial: State;onLogout:()=>void}) {
           </div>
 
           {(view==="schedule"||view==="remaps")&&activeProject.planningWarnings?.map(w=><div className="notice-banner" key={w.source}><AlertCircle size={21}/><div><strong>{w.source}: planejamento {money(w.excess)} acima do limite</strong><span>Planejado: {money(w.planned)} · Limite: {money(w.limit)}. Você pode editar e reduzir as previsões sem aumentar o excesso. Valores já executados continuam protegidos.</span></div></div>)}
-          {view === "overview" && <Overview resources={resources.filter(r=>r.projectId===activeProject.id)} onEditResource={setEditingResource} project={activeProject} rubrics={activeRubrics} entries={projectEntries} navigate={navigate} openEntry={setSelectedExpense} newEntry={() => setNewEntryOpen(true)} importCsv={openCsvImport} />}
+          {view === "overview" && <Overview resources={resources.filter(r=>r.projectId===activeProject.id)} onEditResource={setEditingResource} project={activeProject} rubrics={activeRubrics} entries={projectEntries} navigate={navigate} openEntry={setSelectedExpense} />}
           {view === "companies" && <CompaniesView companies={companyList} projects={projectList} selectedCompanyId={profileCompanyId} activeProjectId={projectId} onSelectCompany={setProfileCompanyId} onNewCompany={() => setCompanyModalOpen(true)} onNewProject={startProjectCreation} onSwitchProject={switchProject} />}
           {view === "team" && <TeamView project={activeProject} members={activeTeamMembers} onImport={() => setTeamImportOpen(true)} onAdd={() => setTeamMemberCreateOpen(true)} onEdit={setEditingTeamMember} onDelete={setTeamMemberToDelete} />}
           {view === "schedule" && <ScheduleView onAdd={()=>setScheduleCreateOpen(true)} project={activeProject} items={activeScheduleItems} onImport={() => setScheduleImportOpen(true)} onEdit={setEditingScheduleItem} />}
@@ -583,6 +586,7 @@ function Workspace({initial,onLogout}: {initial: State;onLogout:()=>void}) {
       {editingLink&&<ProjectLinkModal project={activeProject} initial={editingLink} onClose={()=>setEditingLink(null)} onSave={saveProjectLink}/>}
       {linkModalOpen && <ProjectLinkModal project={activeProject} onClose={() => setLinkModalOpen(false)} onSave={addProjectLink} />}
       {companyModalOpen && <CompanyModal onClose={() => setCompanyModalOpen(false)} onSave={createCompany} />}
+      {editingProject && <ProjectModal companies={companyList} initialCompanyId={editingProject.companyId} initial={editingProject} onClose={()=>setEditingProject(null)} onSave={editProject} />}
       {projectModalOpen && <ProjectModal companies={companyList} initialCompanyId={projectModalCompanyId} onClose={() => setProjectModalOpen(false)} onSave={createProject} />}
       {csvImportOpen && <CsvImportModal onClose={() => setCsvImportOpen(false)} onImport={finishCsvImport} />}
       {teamImportOpen && <TeamCsvImportModal project={activeProject} onClose={() => setTeamImportOpen(false)} onImport={finishTeamImport} />}
@@ -758,57 +762,59 @@ function CompanyModal({ onClose, onSave }: { onClose: () => void; onSave: (compa
 function ProjectModal({
   companies,
   initialCompanyId,
+  initial,
   onClose,
   onSave,
 }: {
   companies: Company[];
   initialCompanyId: string;
+  initial?: Project;
   onClose: () => void;
   onSave: (project: ProjectDraft) => void;
 }) {
   const [companyId, setCompanyId] = useState(initialCompanyId);
-  const [name, setName] = useState("");
-  const [code, setCode] = useState("");
-  const [agency, setAgency] = useState("FINEP");
-  const [customAgency,setCustomAgency]=useState("");
+  const [name, setName] = useState(initial?.name || "");
+  const [code, setCode] = useState(initial?.code || "");
+  const [agency, setAgency] = useState(initial?.agency && !["FINEP","EMBRAPII","FACEPE","CNPq","BNDES"].includes(initial.agency) ? "Outro" : initial?.agency || "FINEP");
+  const [customAgency,setCustomAgency]=useState(initial?.agency || "");
   const resolvedAgency=agency==="Outro"?customAgency.trim():agency;
-  const [startDate, setStartDate] = useState("");
-  const [endDate, setEndDate] = useState("");
-  const [approved, setApproved] = useState("");
-  const [counterpart, setCounterpart] = useState("");
-  const [installments, setInstallments] = useState("4");
-  const valid = Boolean(companyId && name && code && resolvedAgency && startDate && endDate && Number(approved) > 0 && Number(installments) > 0);
+  const [startDate, setStartDate] = useState(initial?.startDate || "");
+  const [endDate, setEndDate] = useState(initial?.endDate || "");
+  const [approved, setApproved] = useState(initial ? String(initial.approved) : "");
+  const [counterpart, setCounterpart] = useState(initial ? String(initial.counterpart) : "");
+  const [installments, setInstallments] = useState(String(initial?.installments || 4));
+  const valid = Boolean(companyId && name.trim() && code.trim() && resolvedAgency && startDate && endDate && endDate >= startDate && Number.isFinite(Number(approved)) && Number(approved) > 0 && Number.isFinite(Number(counterpart)) && Number(counterpart) >= 0 && Number(installments) > 0);
   const company = companies.find((item) => item.id === companyId);
 
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       <div className="modal large project-modal" role="dialog" aria-modal="true" aria-labelledby="project-modal-title">
-        <div className="modal-header"><div><span>Projeto aprovado</span><h2 id="project-modal-title">Cadastrar novo projeto</h2></div><button className="icon-button" aria-label="Fechar" onClick={onClose}><X size={19} /></button></div>
-        <div className="creation-flow">
+        <div className="modal-header"><div><span>Cadastro do projeto</span><h2 id="project-modal-title">{initial ? "Editar projeto" : "Cadastrar novo projeto"}</h2></div><button className="icon-button" aria-label="Fechar" onClick={onClose}><X size={19} /></button></div>
+        {!initial && <div className="creation-flow">
           <div className="done"><span><Check size={14} /></span><p><strong>Perfil da empresa</strong><small>{company?.short || "Empresa selecionada"}</small></p></div>
           <i />
           <div className="active"><span>2</span><p><strong>Projeto aprovado</strong><small>Recursos e vigência</small></p></div>
-        </div>
+        </div>}
         <div className="modal-body">
           <div className="form-section-title"><Rocket size={17} /><div><strong>Identificação do projeto</strong><span>Dados do instrumento de concessão aprovado.</span></div></div>
           <div className="form-grid">
-            <label className="field full"><span>Empresa beneficiária *</span><select value={companyId} onChange={(event) => setCompanyId(event.target.value)}>{companies.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
-            <label className="field full"><span>Nome do projeto *</span><input value={name} onChange={(event) => setName(event.target.value)} placeholder="Título oficial do projeto aprovado" /></label>
-            <label className="field"><span>Número do convênio / termo *</span><input value={code} onChange={(event) => setCode(event.target.value)} placeholder="Ex.: SUBV-2026-001" /></label>
+            <label className="field full"><span>Empresa beneficiária *</span><select disabled={Boolean(initial)} value={companyId} onChange={(event) => setCompanyId(event.target.value)}>{companies.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+            <label className="field full"><span>Nome do projeto *</span><input maxLength={500} value={name} onChange={(event) => setName(event.target.value)} placeholder="Título oficial do projeto aprovado" /></label>
+            <label className="field"><span>Número do termo de outorga / convênio *</span><input maxLength={80} value={code} onChange={(event) => setCode(event.target.value)} placeholder="Ex.: SUBV-2026-001" /></label>
             <label className="field"><span>Órgão concedente *</span><select value={agency} onChange={(event) => setAgency(event.target.value)}><option>FINEP</option><option>EMBRAPII</option><option>FACEPE</option><option>CNPq</option><option>BNDES</option><option value="Outro">Outros</option></select></label>
             {agency==="Outro"&&<label className="field full"><span>Nome do órgão concedente *</span><input autoFocus maxLength={100} value={customAgency} onChange={e=>setCustomAgency(e.target.value)} placeholder="Digite o nome do órgão concedente"/></label>}
             <label className="field"><span>Início da vigência *</span><input type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} /></label>
             <label className="field"><span>Fim da vigência *</span><input type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} /></label>
           </div>
-          <div className="form-section-title second"><CircleDollarSign size={17} /><div><strong>Recursos aprovados</strong><span>Valores que formarão o orçamento inicial do projeto.</span></div></div>
+          <div className="form-section-title second"><CircleDollarSign size={17} /><div><strong>Recursos aprovados</strong><span>{initial ? "Valores totais aprovados para cada fonte de recursos." : "Valores que formarão o orçamento inicial do projeto."}</span></div></div>
           <div className="form-grid project-values-form">
-            <label className="field money-field"><span>Subvenção aprovada *</span><div><b>R$</b><input type="number" min="0" value={approved} onChange={(event) => setApproved(event.target.value)} placeholder="0,00" /></div></label>
-            <label className="field money-field"><span>Contrapartida pactuada</span><div><b>R$</b><input type="number" min="0" value={counterpart} onChange={(event) => setCounterpart(event.target.value)} placeholder="0,00" /></div></label>
-            <label className="field full"><span>Número de parcelas *</span><select value={installments} onChange={(event) => setInstallments(event.target.value)}>{[1,2,3,4,5,6,7,8,9,10,11,12].map((number) => <option key={number} value={number}>{number} {number === 1 ? "parcela" : "parcelas"}</option>)}</select></label>
+            <label className="field money-field"><span>Subvenção aprovada *</span><div><b>R$</b><input type="number" min="0" step="0.01" value={approved} onChange={(event) => setApproved(event.target.value)} placeholder="0,00" /></div></label>
+            <label className="field money-field"><span>Contrapartida pactuada</span><div><b>R$</b><input type="number" min="0" step="0.01" value={counterpart} onChange={(event) => setCounterpart(event.target.value)} placeholder="0,00" /></div></label>
+            <label className="field full"><span>Número de parcelas *</span><select value={installments} onChange={(event) => setInstallments(event.target.value)}>{Array.from({length:48},(_,i)=>i+1).map((number) => <option key={number} value={number}>{number} {number === 1 ? "parcela" : "parcelas"}</option>)}</select></label>
           </div>
-          <div className="project-create-note"><ShieldCheck size={17} /><span><strong>O projeto será criado como “A iniciar”.</strong> Depois você poderá importar as rubricas, registrar as parcelas e anexar o instrumento aprovado.</span></div>
+          <div className="project-create-note"><ShieldCheck size={17} /><span>{initial ? <>As alterações mantêm os lançamentos e documentos do projeto. Para reduzir os valores, ajuste antes as previsões que ultrapassem o novo limite; recursos recebidos e despesas executadas continuam protegidos.</> : <><strong>O projeto será criado como “A iniciar”.</strong> Depois você poderá importar as rubricas, registrar as parcelas e anexar o instrumento aprovado.</>}</span></div>
         </div>
-        <div className="modal-footer"><button className="secondary-button" onClick={onClose}>Cancelar</button><button className="primary-button" disabled={!valid} onClick={() => onSave({ companyId, name, code, agency:resolvedAgency, startDate, endDate, approved: Number(approved), counterpart: Number(counterpart) || 0, installments: Number(installments) })}>Criar e acessar projeto <Rocket size={17} /></button></div>
+        <div className="modal-footer"><button className="secondary-button" onClick={onClose}>Cancelar</button><button className="primary-button" disabled={!valid} onClick={() => onSave({ companyId, name, code, agency:resolvedAgency, startDate, endDate, approved: Number(approved), counterpart: Number(counterpart) || 0, installments: Number(installments) })}>{initial ? <>Salvar alterações <Check size={17} /></> : <>Criar e acessar projeto <Rocket size={17} /></>}</button></div>
       </div>
     </div>
   );
@@ -820,16 +826,12 @@ function Overview({
   entries,
   navigate,
   openEntry,
-  newEntry,
-  importCsv,
 }: {
   project: Project; resources:Resource[]; onEditResource:(r:Resource)=>void;
   rubrics: typeof baseRubrics;
   entries: Expense[];
   navigate: (view: View) => void;
   openEntry: (expense: Expense) => void;
-  newEntry: () => void;
-  importCsv: () => void;
 }) {
   const [rubricFilter, setRubricFilter] = useState("Todas");
   const subExecuted=project.executedSubvention||0,counterExecuted=project.executedCounterpart||0;
@@ -856,7 +858,7 @@ function Overview({
         <section className="notice-banner onboarding-notice">
           <div className="notice-icon"><CheckCircle2 size={19} /></div>
           <div><strong>Orçamento importado e pronto para execução</strong><span>As rubricas já estão preenchidas. Agora registre a primeira despesa deste projeto.</span></div>
-          <button onClick={newEntry}>Primeiro lançamento <ArrowRight size={16} /></button>
+          <button onClick={() => navigate("entries")}>Abrir lançamentos <ArrowRight size={16} /></button>
         </section>
       ) : (
         <section className="notice-banner onboarding-notice">
@@ -957,8 +959,8 @@ function Overview({
       </section>
 
       <section className="panel recent-panel">
-        <div className="panel-header"><div><h2>Lançamentos recentes</h2><p>Últimas movimentações registradas no projeto</p></div><button className="secondary-button small" onClick={newEntry}><Plus size={16} /> Adicionar despesa</button></div>
-        {entries.length > 0 ? <ExpenseTable entries={entries.slice(0, 5)} onOpen={openEntry} /> : <div className="empty-state compact"><ReceiptText size={27} /><strong>Nenhum lançamento neste projeto</strong><p>Importe o orçamento ou registre a primeira despesa.</p><button className="primary-button" onClick={newEntry}><Plus size={17} /> Primeiro lançamento</button></div>}
+        <div className="panel-header"><div><h2>Lançamentos recentes</h2><p>Últimas movimentações registradas no projeto</p></div><button className="secondary-button small" onClick={() => navigate("entries")}><ArrowRight size={16} /> Ver lançamentos</button></div>
+        {entries.length > 0 ? <ExpenseTable entries={entries.slice(0, 5)} onOpen={openEntry} /> : <div className="empty-state compact"><ReceiptText size={27} /><strong>Nenhum lançamento neste projeto</strong><p>Acesse Lançamentos para registrar as despesas do projeto.</p><button className="primary-button" onClick={() => navigate("entries")}><ArrowRight size={17} /> Abrir lançamentos</button></div>}
         <button className="full-width-link" onClick={() => navigate("entries")}>Ver todos os lançamentos <ArrowRight size={16} /></button>
       </section>
     </>

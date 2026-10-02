@@ -44,6 +44,8 @@ test('Produção standalone: autenticação, cookies, CRUD, anexos e reinício',
   assert.equal((await call('resources/'+resource.id,'PATCH',{...resource,value:800})).status,200);
   assert.equal((await call('resources/'+counterpart.id,'PATCH',{...counterpart,value:400})).status,200);
   const summary=(await(await call('state')).json()).projects[0];assert.equal(summary.released,800);assert.equal(summary.counterpartRealized,400);
+  const editedProject=await call('projects/'+project.id,'PATCH',{version:1,name:'Projeto HTTP atualizado',code:'TERMO-HTTP',agency:'Fundação Estadual de Pesquisa',approved:12000.50,counterpart:1500.25});assert.equal(editedProject.status,200);
+  const updatedProject=await editedProject.json();assert.equal(updatedProject.released,800);assert.equal(updatedProject.counterpartRealized,400);assert.equal(updatedProject.version,2);
   const member=await(await call('team','POST',{projectId:project.id,name:'Ana',role:'Dev',activity:'Desenvolver'})).json();assert.ok(member.id);
   assert.equal((await call('team/'+member.id,'PATCH',{...member,name:'Ana atualizada'})).status,200);
   assert.equal((await call('schedule/import','POST',{projectId:project.id,rows:[{item:'Web',activity:'Desenvolver plataforma',month:'Janeiro',value:500,status:'Em andamento'}]})).status,201);
@@ -58,7 +60,7 @@ test('Produção standalone: autenticação, cookies, CRUD, anexos e reinício',
   const expense=await(await call('expenses','POST',{projectId:project.id,supplier:'Fornecedor',description:'Insumos',rubric:'Material de Consumo',value:100.30,date:'2026-09-23'},{invoice:bytes,payment:bytes})).json();assert.ok(expense.id);
   let state=await(await call('state')).json();assert.equal(state.projects[0].executed,100.30);assert.equal(state.expenses[0].docs,2);
   const documentId=state.expenses[0].documents[0].id;assert.equal(await(await call('documents/'+documentId)).text(),bytes);
-  await stop();await start();state=await(await call('state')).json();assert.equal(state.projectDocuments.find(d=>d.id===general.id).name,'Termo de outorga');assert.equal(await(await call('projectDocuments/'+general.id)).text(),bytes);assert.equal(state.team[0].name,'Ana atualizada');assert.equal(state.schedule[0].month,'Janeiro');assert.equal(state.projects[0].executed,100.30);assert.equal(await(await call('documents/'+documentId)).text(),bytes);
+  await stop();await start();state=await(await call('state')).json();assert.equal(state.projectDocuments.find(d=>d.id===general.id).name,'Termo de outorga');assert.equal(await(await call('projectDocuments/'+general.id)).text(),bytes);assert.equal(state.projects[0].name,'Projeto HTTP atualizado');assert.equal(state.projects[0].agency,'Fundação Estadual de Pesquisa');assert.equal(state.projects[0].approved,12000.50);assert.equal(state.projects[0].counterpart,1500.25);assert.equal(state.team[0].name,'Ana atualizada');assert.equal(state.schedule[0].month,'Janeiro');assert.equal(state.projects[0].executed,100.30);assert.equal(await(await call('documents/'+documentId)).text(),bytes);
   // New workflows through the actual HTTP API, including pending documents and edits.
   const recurring=await call('schedule','POST',{projectId:project.id,rubric:'Pessoal / Pró-labore',activity:'Coordenação mensal',month:'Dezembro',year:2026,value:300,monthsCount:2});assert.equal(recurring.status,201);
   const installments=await recurring.json();assert.equal(installments[1].year,2027);
