@@ -42,10 +42,12 @@ test('Produção standalone: autenticação, cookies, CRUD, anexos e reinício',
   assert.equal((await call('schedule/import','POST',{projectId:project.id,rows:[{item:'Web',activity:'Desenvolver plataforma',month:'Janeiro',value:500,status:'Em andamento'}]})).status,201);
   assert.equal((await call('budget/import','POST',{projectId:project.id,rows:[{fonte:'Subvenção',elemento:'Material de Consumo',descricao:'Insumos',unitario:1000,qtd:1,valorTotal:1000}]})).status,201);
   const bytes='%PDF-1.4\n%%EOF';
+  const general=await(await call('projectDocuments','POST',{projectId:project.id,name:'Projeto original'},{project:bytes})).json();assert.ok(general.id);
+  assert.equal((await call('projectDocuments/'+general.id,'PATCH',{version:1,name:'Termo de outorga'})).status,200);
   const expense=await(await call('expenses','POST',{projectId:project.id,supplier:'Fornecedor',description:'Insumos',rubric:'Material de Consumo',value:100.30,date:'2026-09-23'},{invoice:bytes,payment:bytes})).json();assert.ok(expense.id);
   let state=await(await call('state')).json();assert.equal(state.projects[0].executed,100.30);assert.equal(state.expenses[0].docs,2);
   const documentId=state.expenses[0].documents[0].id;assert.equal(await(await call('documents/'+documentId)).text(),bytes);
-  await stop();await start();state=await(await call('state')).json();assert.equal(state.team[0].name,'Ana atualizada');assert.equal(state.schedule[0].month,'Janeiro');assert.equal(state.projects[0].executed,100.30);assert.equal(await(await call('documents/'+documentId)).text(),bytes);
+  await stop();await start();state=await(await call('state')).json();assert.equal(state.projectDocuments[0].name,'Termo de outorga');assert.equal(await(await call('projectDocuments/'+general.id)).text(),bytes);assert.equal(state.team[0].name,'Ana atualizada');assert.equal(state.schedule[0].month,'Janeiro');assert.equal(state.projects[0].executed,100.30);assert.equal(await(await call('documents/'+documentId)).text(),bytes);
   // New workflows through the actual HTTP API, including pending documents and edits.
   const recurring=await call('schedule','POST',{projectId:project.id,rubric:'Pessoal / Pró-labore',activity:'Coordenação mensal',month:'Dezembro',year:2026,value:300,monthsCount:2});assert.equal(recurring.status,201);
   const installments=await recurring.json();assert.equal(installments[1].year,2027);
@@ -65,6 +67,9 @@ test('Produção standalone: autenticação, cookies, CRUD, anexos e reinício',
   await stop();env.DATABASE_PATH=backupPath;await start();
   assert.equal(await(await call('documents/'+documentId)).text(),bytes);
   assert.equal((await(await call('state')).json()).projects[0].executed,100.30);
+  assert.equal(await(await call('projectDocuments/'+general.id)).text(),bytes);
+  assert.equal((await call('projectDocuments/'+general.id,'DELETE',{version:2})).status,200);
+  assert.equal((await call('projectDocuments/'+general.id)).status,404);
   assert.equal((await call('team/'+member.id,'DELETE',{version:2})).status,200);assert.equal((await(await call('state')).json()).team.length,0);
  }finally{await stop();rmSync(dir,{recursive:true,force:true});}
 });

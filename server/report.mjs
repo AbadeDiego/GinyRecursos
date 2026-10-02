@@ -1,6 +1,7 @@
 import { sourceOf, resourceSource } from '../lib/funding.mjs';
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const money = value => Number(value || 0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
+const documentLabels={invoice:'Nota fiscal / recibo',payment:'Comprovante',quote1:'Orçamento 1',quote2:'Orçamento 2',quote3:'Orçamento 3'};
 const sum = rows => rows.reduce((s,r)=>s+Math.round(r.value*100),0)/100;
 function table(headers, rows) {
   return `<div class="table-wrap"><table><thead><tr>${headers.map(h=>`<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>${rows.length?rows.map(row=>`<tr>${row.map(c=>`<td>${esc(c)}</td>`).join('')}</tr>`).join(''):`<tr><td colspan="${headers.length}">Nenhum registro.</td></tr>`}</tbody></table></div>`;
@@ -24,12 +25,13 @@ export function renderReport(r) {
   <h2>1. Resumo financeiro por fonte</h2>${table(['Fonte','Previsto no projeto','Planejado','Entradas registradas','Executado','Saldo calculado','Execução'],sourceRows)}<p class="muted">As entradas de subvenção incluem rendimentos de ${money(p.income)}. Os saldos são calculados pelos registros da plataforma. Rascunhos não entram no executado.</p>
   <h2>2. Planejamento e execução por rubrica</h2>${table(['Fonte','Rubrica','Planejado','Executado','Disponível'],r.planning.map(x=>[x.source,x.rubric,money(x.planned),money(x.executed),money((Math.round(x.planned*100)-Math.round(x.executed*100))/100)]))}
   <h2>3. Recursos e parcelas recebidos</h2>${table(['Data','Fonte','Tipo','Parcela','Referência','Valor','Comprovantes'],r.resources.map(x=>[x.date,resourceSource(x),x.kind,x.installment||'—',x.reference,money(x.value),x.documents.map(d=>d.name).join('; ')||'Pendente']))}
-  <h2>4. Lançamentos e documentos</h2><p>${expenses.length} despesas registradas · ${drafts.length} rascunhos · ${pending.length} despesas com documentos pendentes.</p>${table(['Data','Fonte','Rubrica','Fornecedor','Descrição','Valor','Situação','Documentos'],r.expenses.map(x=>[x.date,sourceOf(x),x.rubric,x.supplier,x.description,money(x.value),x.draft?'Rascunho':x.status,`${x.docs}/${x.requiredDocs} · ${x.documents.map(d=>d.name).join('; ')||'Sem anexos'}`]))}
-  ${pending.length?`<p class="notice">Documentos a completar: ${esc(pending.map(x=>`${x.supplier} (${x.missingDocuments.join(', ')})`).join('; '))}.</p>`:''}
+  <h2>4. Lançamentos e documentos</h2><p>${expenses.length} despesas registradas · ${drafts.length} rascunhos · ${pending.length} despesas com anexos a completar. O checklist é informativo; o envio de todos os documentos é opcional.</p>${table(['Data','Fonte','Rubrica','Fornecedor','Descrição','Valor','Situação','Documentos'],r.expenses.map(x=>[x.date,sourceOf(x),x.rubric,x.supplier,x.description,money(x.value),x.draft?'Rascunho':x.status,`${x.docs}/${x.requiredDocs} · ${x.documents.map(d=>d.name).join('; ')||'Sem anexos'}`]))}
+  ${pending.length?`<p class="notice">Documentos a completar: ${esc(pending.map(x=>`${x.supplier} (${x.missingDocuments.map(k=>documentLabels[k]||k).join(', ')})`).join('; '))}.</p>`:''}
   <h2>5. Conciliação da conta de subvenção</h2>${table(['Data','Movimentação','Referência','Entrada / saída','Saldo acumulado'],bankRows)}<p class="muted">Somente entradas e despesas da subvenção. A conferência com o extrato é manual.</p>
   <h2>6. Cronograma de execução</h2>${table(['Fonte','Rubrica','Atividade','Mês / ano','Valor previsto','Status'],r.schedule.map(x=>[sourceOf(x),x.rubric||x.item,x.activity,`${x.month}/${x.year||'—'}`,money(x.value),x.status]))}
   <h2>7. Remanejamentos</h2>${table(['Data','Fonte','Origem','Destino','Atividade','Valor','Justificativa','Situação'],r.remaps.map(x=>[x.date,sourceOf(x),x.from,x.to,x.activity,money(x.value),x.reason,x.status==='Aprovado'?'Aplicado':'Registro anterior pendente']))}
   <h2>8. Equipe técnica</h2>${table(['Nome','Função','Atividade'],r.team.map(x=>[x.name,x.role,x.activity]))}
-  <h2>9. Links e referências</h2>${table(['Nome','Endereço','Data'],r.links.map(x=>[x.name,x.url,x.addedAt]))}
+  <h2>9. Documentos gerais do projeto</h2>${table(['Nome','Arquivo','Data'],(r.projectDocuments||[]).map(x=>[x.name,x.filename,x.createdAt.slice(0,10)]))}
+  <h2>10. Links e referências</h2>${table(['Nome','Endereço','Data'],r.links.map(x=>[x.name,x.url,x.addedAt]))}
   <footer class="muted">Relatório gerencial baseado nos dados cadastrados. Os comprovantes originais podem ser baixados na plataforma.</footer></main></body></html>`;
 }

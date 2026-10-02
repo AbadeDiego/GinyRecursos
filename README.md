@@ -30,7 +30,7 @@ Utilize **uma única réplica**, com disco local. Não compartilhe o arquivo SQL
 
 1. Execute `node scripts/backup.mjs` no container atual e guarde uma cópia fora da VPS.
 2. Atualize os arquivos no mesmo repositório e recurso do Coolify. Mantenha os volumes existentes, especialmente `/data`, e as variáveis de ambiente.
-3. Faça o deploy. As migrações são executadas automaticamente. A migração 3 preserva contas, documentos e valores e adiciona a fonte aos registros anteriores; confira a classificação indicada na edição de cada registro.
+3. Faça o deploy. As migrações são executadas automaticamente. A migração 4 cria o armazenamento dos documentos gerais sem alterar os comprovantes existentes. A migração 3 preserva contas, documentos e valores e adiciona a fonte aos registros anteriores; confira a classificação indicada na edição de cada registro.
 4. Confira `/api/health`, login, cronograma e lançamentos. Não recrie a instalação nem apague os volumes para atualizar.
 
 A tela com campos separados deve usar **Protocol: https**, **Domain: somente o hostname** e **Port: 3000**. Em uma tela com um único campo Domains, use `https://hostname:3000`. `APP_ORIGIN` é sempre a URL pública HTTPS, sem a porta interna e sem barra final.
@@ -44,7 +44,7 @@ Se o container ficar em `restarting`, consulte os logs da aplicação: `scripts/
 - **Pró-labore:** escolha Pessoal / Pró-labore, valor mensal, mês/ano inicial e quantidade de meses (1 a 60). Cada parcela é editável separadamente; a mudança de dezembro para janeiro avança o ano. As previsões não criam despesas automaticamente.
 - **CSV do cronograma:** `rubrica;fonte;atividade;valor;mês;ano;meses`. Fonte aceita `Subvenção` ou `Contrapartida`; `ano` e `meses` são opcionais. Arquivos anteriores sem fonte continuam aceitos: Subvenção é o padrão, exceto a rubrica Contrapartida. `meses` expande o pró-labore; `valor` é por mês. Sem `ano`, usa o primeiro mês correspondente a partir do início do projeto. O cabeçalho antigo `item` continua aceito.
 - **Rubricas:** cadastro personalizado por projeto, disponível no cronograma, lançamentos e remanejamentos. Contrapartida está incluída; seu saldo usa o cronograma/orçamento da rubrica e fonte ou, na ausência deles, a contrapartida prevista ainda não alocada a outras rubricas dessa fonte.
-- **Despesas:** documentos podem ser enviados depois, inclusive para serviços de terceiros. A despesa registrada conta no valor executado mesmo com anexos pendentes. A tabela, os detalhes e a Central de documentos destacam as pendências. A conferência bancária mantém a exigência de completar o checklist.
+- **Despesas:** documentos podem ser enviados depois, inclusive para serviços de terceiros. A despesa registrada conta no valor executado mesmo com anexos pendentes. A tabela, os detalhes e o checklist por rubrica em Lançamentos destacam os anexos faltantes. As cinco posições (nota fiscal/recibo, comprovante e três orçamentos) estão disponíveis em todas as rubricas; todas são opcionais. A conferência bancária também aceita anexos pendentes.
 - **Edição/exclusão:** editar recalcula saldos e devolve despesas conciliadas para Em análise. A exclusão confirmada remove a despesa e seus anexos e recalcula os totais; a auditoria preserva os dados do registro excluído.
 - **Remanejamento:** selecione um item real de origem, informe a rubrica e a atividade do novo item, mês/ano, valor e justificativa. O valor é aplicado imediatamente, na mesma fonte da origem. Editar recalcula a transferência e excluir devolve o valor à origem; gastos no destino e remanejamentos posteriores impedem reversões incompatíveis. Justificativa e prazos continuam editáveis em transferências encadeadas. Um orçamento legado no destino é preservado como previsão no cronograma.
 - **Recursos e parcelas:** edição e exclusão recalculam entradas e saldos. A edição aceita substituir o comprovante; excluir remove o comprovante e libera o número da parcela.
@@ -69,7 +69,7 @@ Se o container ficar em `restarting`, consulte os logs da aplicação: `scripts/
 
 **Conferência financeira:** somente a conta de subvenção participa da conciliação, incluindo parcelas, rendimentos e despesas cuja fonte é Subvenção. O fluxo é calculado pelos registros cadastrados. Não existe integração bancária. Marcar uma despesa como conciliada registra a conferência feita pelo administrador, sem confirmar uma transação junto ao banco.
 
-**Relatórios:** relatório HTML com resumo por fonte, planejamento/execução por rubrica, recursos, despesas e documentos, conciliação da subvenção, cronograma, remanejamentos, equipe e links. O botão Imprimir / Salvar em PDF usa o navegador. Exportações de lançamentos CSV e de dados completos JSON também estão disponíveis. Não há geração de relatórios oficiais do concedente, assinatura digital ou envio automático de prestação de contas.
+**Relatórios:** relatório HTML com resumo por fonte, planejamento/execução por rubrica, recursos, despesas e documentos, conciliação da subvenção, cronograma, remanejamentos, equipe, documentos gerais e links. O botão Imprimir / Salvar em PDF usa o navegador. Exportações de lançamentos CSV e de dados completos JSON também estão disponíveis. Não há geração de relatórios oficiais do concedente, assinatura digital ou envio automático de prestação de contas.
 
 **Documentos:** PDF, JPEG e PNG, até 10 MB por arquivo. Os bytes ficam no banco e nos backups. O backend verifica o cabeçalho do formato; isso não equivale a antivírus ou validação fiscal do conteúdo.
 
@@ -77,7 +77,7 @@ Se o container ficar em `restarting`, consulte os logs da aplicação: `scripts/
 
 A migração versionada está em `server/database.mjs`; `docs/schema.sql` é a referência legível. A migração é executada automaticamente uma única vez. Não importe o SQL manualmente.
 
-Tabelas de domínio: `companies`, `projects`, `team`, `schedule`, `budget`, `expenses`, `resources`, `remaps`, `rubrics` e `links`. `documents` relaciona arquivos às despesas e recursos. `users` e `sessions` guardam identidades e sessões; `audit` registra operações; `requests` evita repetição de requisições; `login_attempts` limita tentativas de senha; `migrations` registra a versão.
+Tabelas de domínio: `companies`, `projects`, `team`, `schedule`, `budget`, `expenses`, `resources`, `remaps`, `rubrics` e `links`. `documents` relaciona arquivos às despesas e recursos. `projectDocuments` armazena os documentos gerais nomeados, com arquivo original, metadados e controle de versão. `users` e `sessions` guardam identidades e sessões; `audit` registra operações; `requests` evita repetição de requisições; `login_attempts` limita tentativas de senha; `migrations` registra a versão.
 
 Chaves estrangeiras mantêm a vinculação dos registros. Os valores movimentados são armazenados também em centavos inteiros e os cálculos somam centavos. Edições exigem a versão atual do registro e retornam conflito em vez de sobrescrever outra alteração.
 
@@ -175,3 +175,20 @@ Referências oficiais:
 - https://nextjs.org/docs/app/guides/self-hosting
 - https://nodejs.org/download/release/latest-v24.x/docs/api/sqlite.html
 - https://www.sqlite.org/wal.html
+
+## Ajustes de planejamento e documentos
+
+- Planejamentos anteriores acima do teto podem receber edições neutras, reduções graduais e exclusões que não aumentem o excesso. O aviso permanece visível no Cronograma e nos Remanejamentos até regularização. A operação não pode diminuir a cobertura de despesas já executadas nem ampliar um déficit preexistente. Novas previsões e importações continuam sujeitas aos limites por fonte.
+- Remanejamentos conservam o total por fonte e aceitam edição e reversão, com proteção de despesas e transferências posteriores. A justificativa tem área própria, preserva parágrafos e permite expandir textos longos.
+- Documentos é o arquivo geral do projeto: nome livre, upload, renomeação, substituição, download e exclusão. Exemplos: projeto original e termo de outorga. Os anexos de despesas continuam em Lançamentos, agrupados por rubrica e fonte.
+- Links importantes permitem editar nome e endereço mantendo a data de cadastro.
+- Relatórios tem uma ação principal de visualização/impressão, exportação CSV separada e JSON na seção de uso técnico. JSON contém registros e metadados, não os bytes dos anexos.
+
+| Rota de documentos gerais | Função |
+| --- | --- |
+| `POST /api/projectDocuments` | Nome e arquivo multipart na chave `project`, vinculados ao `projectId` |
+| `PATCH /api/projectDocuments/:id` | Nome e, opcionalmente, novo arquivo; exige `version` atual |
+| `DELETE /api/projectDocuments/:id` | Exclusão com versão, auditoria e idempotência |
+| `GET /api/projectDocuments/:id` | Download original autenticado |
+
+O estado inclui `projectDocuments` sem os bytes dos arquivos. A migração não exige apagar ou recriar o banco.

@@ -204,7 +204,7 @@ test('Rubricas personalizadas, contrapartida e planejamento controlam o saldo',a
   assert.equal((await f.call('expenses','POST',{...expense,projectId,rubric:'Contrapartida',value:2000})).status,201);
   assert.equal((await f.call('expenses','POST',{...expense,projectId,rubric:'Contrapartida',value:0.01})).status,422);
   const state=(await f.call('state')).data;assert.equal(state.projects[0].executed,2500);
-  assert.equal(state.expenses[0].missingDocuments.length,2);
+  assert.equal(state.expenses[0].missingDocuments.length,5);
   f.db.close();
 });
 test('Edição e exclusão recalculam saldos, preservam anexos na edição e registram auditoria',async()=>{
@@ -224,11 +224,11 @@ test('Edição e exclusão recalculam saldos, preservam anexos na edição e reg
   const audit=(await f.call('audit')).data.find(a=>a.entity_id===id&&a.action==='delete');assert.equal(JSON.parse(audit.details).value,400);
   assert.equal(f.db.prepare('PRAGMA foreign_key_check').all().length,0);f.db.close();
 });
-test('Sem anexos: registro e rascunho finalizam; conferência exige documentos',async()=>{
+test('Sem anexos: registro, rascunho e conferência permitidos; checklist informativo',async()=>{
   const f=await fixture(),projectId=f.projectId;
   await f.call('schedule','POST',{...schedule,projectId,rubric:expense.rubric,value:1000});
   const r=(await f.call('expenses','POST',{...expense,projectId})).data;
-  assert.equal((await f.call('expenses/'+r.id,'PATCH',{version:1,action:'reconcile',bankReference:'PIX'})).status,422);
+  assert.equal((await f.call('expenses/'+r.id,'PATCH',{version:1,action:'reconcile',bankReference:'PIX'})).status,200);
   const draft=(await f.call('expenses','POST',{...expense,projectId,draft:true})).data;
   assert.equal((await f.call('expenses/'+draft.id,'PATCH',{version:1,action:'submit'})).status,200);
   const state=(await f.call('state')).data;assert.equal(state.projects[0].executed,200.20);assert.ok(state.expenses.every(e=>e.docs===0));f.db.close();
@@ -359,7 +359,7 @@ test('Relatório completo separa fontes, protege HTML e concilia somente subven�
  const report=(await f.call('reports/'+projectId+'?format=json')).data;
  assert.equal(report.project.executedSubvention,100);assert.equal(report.project.executedCounterpart,200);assert.equal(report.reconciliation.balance,900.3);assert.equal(report.reconciliation.outgoing.length,1);assert.equal(report.reconciliation.incoming.length,2);
  assert.equal(report.expenses.length,3);assert.equal(report.planning.length,2);
- const html=(await f.call('reports/'+projectId+'?format=html')).data;assert.ok(!html.includes('<script>alert(1)</script>'));assert.ok(html.includes('&lt;script&gt;'));assert.match(html,/9\. Links e referências/);assert.match(html,/Imprimir \/ Salvar em PDF/);
+ const html=(await f.call('reports/'+projectId+'?format=html')).data;assert.ok(!html.includes('<script>alert(1)</script>'));assert.ok(html.includes('&lt;script&gt;'));assert.match(html,/10\. Links e referências/);assert.match(html,/Imprimir \/ Salvar em PDF/);
  const csv=(await f.call('reports/'+projectId)).data;assert.match(csv,/Fonte/);assert.match(csv,/Contrapartida/);
  const second=(await f.call('projects','POST',{...f.project,companyId:f.company.id,code:'R2',name:'Outro projeto'})).data;
  const other=(await f.call('reports/'+second.id+'?format=json')).data;assert.equal(other.expenses.length,0);assert.equal(other.resources.length,0);assert.equal(other.project.executedSubvention,0);f.db.close();
@@ -391,4 +391,106 @@ test('Transferência na mesma rubrica preserva gastos e o status do destino na e
  assert.equal((await f.call('remaps/'+result.data.id,'PATCH',{...result.data,value:600,reason:'Reprogramação revisada'})).status,200);
  let state=(await f.call('state')).data;assert.equal(state.schedule.find(s=>s.id===state.remaps[0].destinationScheduleId).status,'Concluída');assert.equal(state.projects[0].executed,900);
  assert.equal((await f.call('remaps/'+result.data.id,'DELETE',{version:2})).status,200);state=(await f.call('state')).data;assert.equal(state.schedule[0].value,1000);f.db.close();
+});
+
+function lowerProjectLimit(f,approved) {
+ const row=f.db.prepare('SELECT data FROM projects WHERE id=?').get(f.projectId);
+ f.db.prepare('UPDATE projects SET data=? WHERE id=?').run(JSON.stringify({...JSON.parse(row.data),approved}),f.projectId);
+}
+test('Excesso legado: edita metadados, reduz em etapas e exclui sem aumentar o excesso',async()=>{
+ const f=await fixture(),projectId=f.projectId;
+ const item=(await f.call('schedule','POST',{...schedule,projectId,value:8500})).data;
+ lowerProjectLimit(f,8000);
+ const edit=await f.call('schedule/'+item.id,'PATCH',{...item,activity:'Descrição corrigida',status:'Em andamento'});
+ assert.equal(edit.status,200);assert.equal(edit.data.value,8500);
+ assert.equal((await f.call('schedule/'+item.id,'PATCH',{...edit.data,value:8600})).status,422);
+ const reduced=await f.call('schedule/'+item.id,'PATCH',{...edit.data,value:8300});assert.equal(reduced.status,200);
+ assert.equal((await f.call('schedule/'+item.id,'PATCH',{...reduced.data,value:8400})).status,422);
+ assert.equal((await f.call('schedule','POST',{...schedule,projectId,value:1})).status,422);
+ assert.equal((await f.call('schedule/'+item.id,'DELETE',{version:reduced.data.version})).status,200);
+ assert.equal((await f.call('state')).data.schedule.length,0);f.db.close();
+});
+test('Excesso legado: remanejamento neutro permite criar, editar e reverter; execução continua protegida',async()=>{
+ const f=await fixture(),projectId=f.projectId;
+ const source=(await f.call('schedule','POST',{...schedule,rubric:expense.rubric,projectId,value:8500})).data;
+ lowerProjectLimit(f,8000);
+ const data={projectId,sourceScheduleId:source.id,to:'Consultoria',activity:'Consultoria técnica',month:'Março',year:2026,value:500,reason:'Justificativa inicial'};
+ const created=await f.call('remaps','POST',data);assert.equal(created.status,201);
+ let changed=await f.call('remaps/'+created.data.id,'PATCH',{...created.data,value:800});assert.equal(changed.status,200);
+ changed=await f.call('remaps/'+created.data.id,'PATCH',{...changed.data,reason:'Justificativa revisada\nCom segundo parágrafo.'});assert.equal(changed.status,200);
+ assert.equal((await f.call('expenses','POST',{...expense,projectId,rubric:'Consultoria',value:100})).status,201);
+ assert.equal((await f.call('remaps/'+created.data.id,'DELETE',{version:changed.data.version})).status,422);
+ let state=(await f.call('state')).data;assert.equal(state.remaps[0].value,800);assert.equal(state.schedule.reduce((n,r)=>n+r.value,0),8500);
+ assert.equal((await f.call('expenses/'+state.expenses[0].id,'DELETE',{version:1})).status,200);
+ assert.equal((await f.call('remaps/'+created.data.id,'DELETE',{version:changed.data.version})).status,200);
+ state=(await f.call('state')).data;assert.equal(state.schedule.length,1);assert.equal(state.schedule[0].value,8500);f.db.close();
+});
+test('Déficit legado por rubrica permite metadados e correção sem piorar cobertura nem outra fonte',async()=>{
+ const f=await fixture(),projectId=f.projectId;
+ const item=(await f.call('schedule','POST',{...schedule,rubric:expense.rubric,projectId,value:500})).data;
+ assert.equal((await f.call('expenses','POST',{...expense,projectId,value:400})).status,201);
+ const legacy={...item,value:300};f.db.prepare('UPDATE schedule SET data=?,value_cents=? WHERE id=?').run(JSON.stringify(legacy),30000,item.id);
+ const updated=await f.call('schedule/'+item.id,'PATCH',{...legacy,status:'Concluída'});assert.equal(updated.status,200);
+ assert.equal((await f.call('schedule/'+item.id,'PATCH',{...updated.data,value:299})).status,422);
+ const corrected=await f.call('schedule/'+item.id,'PATCH',{...updated.data,value:400});assert.equal(corrected.status,200);
+ assert.equal((await f.call('schedule/'+item.id,'DELETE',{version:corrected.data.version})).status,422);
+ const other=(await f.call('schedule','POST',{...schedule,projectId,source:'Contrapartida',value:2000})).data;
+ assert.equal((await f.call('schedule/'+other.id,'PATCH',{...other,value:2001})).status,422);f.db.close();
+});
+test('Três orçamentos disponíveis em qualquer rubrica; cinco anexos opcionais e checklist exato',async()=>{
+ const f=await fixture(),projectId=f.projectId;
+ await f.call('schedule','POST',{...schedule,rubric:expense.rubric,projectId,value:500});
+ const item=(await f.call('expenses','POST',{...expense,projectId})).data;
+ let entry=(await f.call('state')).data.expenses[0];assert.equal(entry.requiredDocs,5);assert.equal(entry.docs,0);assert.equal(entry.missingDocuments.length,5);
+ assert.equal((await f.call('expenses/'+item.id+'/documents','POST',{}, {files:{quote1:pdf,quote2:pdf,quote3:pdf}})).status,201);
+ entry=(await f.call('state')).data.expenses[0];assert.equal(entry.docs,3);assert.deepEqual(entry.missingDocuments,['invoice','payment']);
+ assert.equal((await f.call('expenses/'+item.id+'/documents','POST',{}, {files:{invoice:pdf,payment:pdf}})).status,201);
+ entry=(await f.call('state')).data.expenses[0];assert.equal(entry.docs,5);assert.deepEqual(entry.missingDocuments,[]);f.db.close();
+});
+test('Documentos gerais: CRUD, bytes originais, idempotência, validação e separação de lançamentos',async()=>{
+ const f=await fixture(),projectId=f.projectId,key=randomUUID();
+ const request={projectId,name:'Projeto original'},options={key,files:{project:pdf}};
+ const created=await f.call('projectDocuments','POST',request,options);assert.equal(created.status,201);
+ assert.equal((await f.call('projectDocuments','POST',request,options)).data.id,created.data.id);
+ assert.equal(created.data.name,'Projeto original');assert.equal(created.data.bytes,undefined);
+ let state=(await f.call('state')).data;assert.equal(state.projectDocuments.length,1);assert.equal(state.expenses.length,0);
+ assert.equal(state.projectDocuments[0].filename,'project.pdf');assert.equal((await f.call('projectDocuments/'+created.data.id)).data,pdf);
+ const renamed=await f.call('projectDocuments/'+created.data.id,'PATCH',{version:1,name:'Termo de outorga'});assert.equal(renamed.status,200);
+ assert.equal((await f.call('projectDocuments/'+created.data.id,'PATCH',{version:1,name:'Versão antiga'})).status,409);
+ const replacement=pdf+'\n% revisão';assert.equal((await f.call('projectDocuments/'+created.data.id,'PATCH',{version:2,name:'Termo revisado'},{files:{project:replacement}})).status,200);
+ assert.equal((await f.call('projectDocuments/'+created.data.id)).data,replacement);
+ assert.equal((await f.call('projectDocuments','POST',request)).status,422);
+ assert.equal((await f.call('projectDocuments','POST',{...request,name:''},{files:{project:pdf}})).status,422);
+ assert.equal((await f.call('projectDocuments','POST',request,{files:{project:'arquivo falso'}})).status,422);
+ assert.equal((await f.call('projectDocuments','POST',request,{files:{invoice:pdf}})).status,422);
+ assert.equal((await f.call('projectDocuments','POST',{...request,projectId:'inexistente'},{files:{project:pdf}})).status,404);
+ const report=await f.call('reports/'+projectId+'?format=json');assert.equal(report.data.projectDocuments[0].name,'Termo revisado');assert.match(report.response.headers.get('content-disposition'),/attachment/);
+ assert.match((await f.call('reports/'+projectId+'?format=html')).data,/Termo revisado/);
+ assert.equal((await f.app(new Request(origin+'/api/projectDocuments/'+created.data.id))).status,401);
+ createUser(f.db,{...admin,email:'reader@test.example',role:'viewer'});
+ const login=await f.call('auth/login','POST',{email:'reader@test.example',password:admin.password});const cookie=login.response.headers.get('set-cookie').split(';')[0];
+ assert.equal((await f.call('projectDocuments/'+created.data.id,'GET',undefined,{headers:{cookie}})).status,200);
+ assert.equal((await f.call('projectDocuments/'+created.data.id,'DELETE',{version:3},{headers:{cookie}})).status,403);
+ assert.equal((await f.call('projectDocuments/'+created.data.id,'DELETE',{version:3})).status,200);
+ assert.equal((await f.call('projectDocuments/'+created.data.id)).status,404);assert.equal((await f.call('state')).data.projectDocuments.length,0);
+ assert.equal(f.db.prepare('PRAGMA foreign_key_check').all().length,0);f.db.close();
+});
+test('Links editáveis: preservam data original, validam URL e detectam versão desatualizada',async()=>{
+ const f=await fixture();const item=(await f.call('links','POST',{projectId:f.projectId,name:'Portal',url:'https://example.com'})).data;
+ f.db.prepare('UPDATE links SET data=? WHERE id=?').run(JSON.stringify({...item,addedAt:'2020-01-01'}),item.id);
+ const edited=await f.call('links/'+item.id,'PATCH',{...item,name:'Portal atualizado',url:'https://example.com/novo'});assert.equal(edited.status,200);assert.equal(edited.data.addedAt,'2020-01-01');
+ assert.equal((await f.call('links/'+item.id,'PATCH',{...edited.data,url:'javascript:alert(1)'})).status,422);
+ assert.equal((await f.call('links/'+item.id,'PATCH',item)).status,409);assert.equal((await f.call('state')).data.links[0].name,'Portal atualizado');f.db.close();
+});
+
+test('Migração 4 preserva banco existente e anexos ao criar o arquivo geral do projeto',async()=>{
+ const f=await fixture();await f.call('schedule','POST',{...schedule,projectId:f.projectId,rubric:expense.rubric,value:500});
+ await f.call('expenses','POST',{...expense,projectId:f.projectId},{files:{invoice:pdf}});
+ const directory=mkdtempSync(join(tmpdir(),'migration4-')),path=join(directory,'legacy.sqlite');
+ try {
+  f.db.exec('DROP TABLE projectDocuments; DELETE FROM migrations WHERE version=4');await backup(f.db,path);f.db.close();
+  let db=openDatabase(path);assert.equal(db.prepare('SELECT count(*) AS n FROM expenses').get().n,1);assert.equal(Buffer.from(db.prepare('SELECT bytes FROM documents').get().bytes).toString(),pdf);
+  assert.equal(db.prepare('SELECT count(*) AS n FROM projectDocuments').get().n,0);assert.equal(db.prepare('SELECT count(*) AS n FROM users').get().n,1);db.close();
+  db=openDatabase(path);assert.equal(db.prepare('SELECT count(*) AS n FROM migrations WHERE version=4').get().n,1);assert.equal(db.prepare('PRAGMA integrity_check').get().integrity_check,'ok');db.close();
+ } finally {rmSync(directory,{recursive:true,force:true});}
 });

@@ -5,15 +5,15 @@ import { bootstrap, createUser, digest, hashPassword, newSession, sessionCookie,
 import { transaction } from './database.mjs';
 import { HttpError, check, cents, text, validate, rubrics, months, integer } from './validation.mjs';
 
-const entities = ['companies','projects','team','schedule','links','expenses','resources','budget','remaps','rubrics'];
+const entities = ['companies','projects','team','schedule','links','expenses','resources','budget','remaps','rubrics','projectDocuments'];
 const moneyTables = ['schedule','expenses','resources','budget','remaps'];
-const docKinds = ['invoice','payment','quote1','quote2','quote3','support','proof'];
+const docKinds = ['invoice','payment','quote1','quote2','quote3','support','proof','project'];
 const decode = row => row ? { ...JSON.parse(row.data), id:row.id, ...(row.project_id ? {projectId:row.project_id} : {}), version:row.version } : null;
-const required = expense => expense.rubric.includes('Terceiros') ? ['invoice','payment','quote1','quote2','quote3'] : ['invoice','payment'];
+const required = () => ['invoice','payment','quote1','quote2','quote3'];
 const now = () => new Date().toISOString();
 const json = (data, status=200, headers={}) => Response.json(data, {status, headers:{'Cache-Control':'no-store','X-Content-Type-Options':'nosniff',...headers}});
-function rows(db, entity, projectId) { return db.prepare(`SELECT * FROM ${entity}${projectId ? ' WHERE project_id=?' : ''} ORDER BY rowid`).all(...(projectId ? [projectId] : [])).map(decode); }
-function record(db, entity, id) { const result=decode(db.prepare(`SELECT * FROM ${entity} WHERE id=?`).get(id)); check(result,'Registro não encontrado.',404); return result; }
+function rows(db, entity, projectId) { return db.prepare(`SELECT ${entity==='projectDocuments'?'id,project_id,data,version':'*'} FROM ${entity}${projectId ? ' WHERE project_id=?' : ''} ORDER BY rowid`).all(...(projectId ? [projectId] : [])).map(decode); }
+function record(db, entity, id) { const result=decode(db.prepare(`SELECT ${entity==='projectDocuments'?'id,project_id,data,version':'*'} FROM ${entity} WHERE id=?`).get(id)); check(result,'Registro não encontrado.',404); return result; }
 function audit(db,user,action,entity,id,details=null) { db.prepare('INSERT INTO audit(user_id,action,entity,entity_id,created_at,details) VALUES(?,?,?,?,?,?)').run(user.id,action,entity,id,now(),details ? JSON.stringify(details) : null); }
 function insert(db,entity,data,projectId) {
   const id=randomUUID(), columns=['id','data'], values=[id,JSON.stringify(data)];
@@ -29,10 +29,14 @@ function expenseView(db,expense) { const docs=documents(db,'expense_id',expense.
 function projectView(db,project) {
   const rs=rows(db,'resources',project.id), ex=rows(db,'expenses',project.id);
   const sum=list=>list.reduce((total,item)=>total+cents(item.value),0)/100;
-  return {...project,status:project.status==='A iniciar'&&(rs.length||ex.some(e=>!e.draft))?'Em execução':project.status,released:sum(rs.filter(r=>r.kind==='Parcela da subvenção')),counterpartRealized:sum(rs.filter(r=>r.kind==='Contrapartida financeira')),income:sum(rs.filter(r=>r.kind==='Rendimento de aplicação')),executed:sum(ex.filter(e=>!e.draft)),executedSubvention:sum(ex.filter(e=>!e.draft&&sourceOf(e)==='Subvenção')),executedCounterpart:sum(ex.filter(e=>!e.draft&&sourceOf(e)==='Contrapartida')),receivedInstallments:rs.filter(r=>r.kind==='Parcela da subvenção').map(r=>r.installment)};
+  const planningWarnings=fundingSources.flatMap(source=>{
+    const total=[...planNames(db,project.id,source)].reduce((sum,name)=>sum+plannedRubric(db,project.id,name,source),0),limit=cents(source==='Subvenção'?project.approved:project.counterpart,'',true);
+    return total>limit?[{source,planned:total/100,limit:limit/100,excess:(total-limit)/100}]:[];
+  });
+  return {...project,planningWarnings,status:project.status==='A iniciar'&&(rs.length||ex.some(e=>!e.draft))?'Em execução':project.status,released:sum(rs.filter(r=>r.kind==='Parcela da subvenção')),counterpartRealized:sum(rs.filter(r=>r.kind==='Contrapartida financeira')),income:sum(rs.filter(r=>r.kind==='Rendimento de aplicação')),executed:sum(ex.filter(e=>!e.draft)),executedSubvention:sum(ex.filter(e=>!e.draft&&sourceOf(e)==='Subvenção')),executedCounterpart:sum(ex.filter(e=>!e.draft&&sourceOf(e)==='Contrapartida')),receivedInstallments:rs.filter(r=>r.kind==='Parcela da subvenção').map(r=>r.installment)};
 }
 export function snapshot(db,user) {
-  return {user,companies:rows(db,'companies'),projects:rows(db,'projects').map(p=>projectView(db,p)),team:rows(db,'team'),rubrics:rows(db,'rubrics'),schedule:rows(db,'schedule').map(s=>({...s,rubric:s.rubric || s.item})),links:rows(db,'links'),expenses:rows(db,'expenses').reverse().map(e=>expenseView(db,e)),resources:rows(db,'resources').map(r=>({...r,documents:documents(db,'resource_id',r.id)})),budget:rows(db,'budget'),remaps:rows(db,'remaps')};
+  return {user,projectDocuments:rows(db,'projectDocuments'),companies:rows(db,'companies'),projects:rows(db,'projects').map(p=>projectView(db,p)),team:rows(db,'team'),rubrics:rows(db,'rubrics'),schedule:rows(db,'schedule').map(s=>({...s,rubric:s.rubric || s.item})),links:rows(db,'links'),expenses:rows(db,'expenses').reverse().map(e=>expenseView(db,e)),resources:rows(db,'resources').map(r=>({...r,documents:documents(db,'resource_id',r.id)})),budget:rows(db,'budget'),remaps:rows(db,'remaps')};
 }
 const rubricName = item => item.rubric || item.item;
 const normalized = value => value.normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim().toLowerCase();
@@ -69,12 +73,20 @@ const brl = value => (value/100).toLocaleString('pt-BR',{style:'currency',curren
 function planNames(db,projectId,source) {
   return new Set([...rows(db,'schedule',projectId).filter(s=>sourceOf(s)===source).map(rubricName),...rows(db,'budget',projectId).filter(b=>budgetSource(b)===source).map(b=>b.elemento),...rows(db,'expenses',projectId).filter(e=>sourceOf(e)===source&&!e.draft).map(e=>e.rubric),...rows(db,'remaps',projectId).filter(r=>r.status==='Aprovado'&&sourceOf(r)===source).flatMap(r=>[r.from,r.to])]);
 }
-function assertPlan(db,projectId) {
+function planBaseline(db,projectId) {
+  return Object.fromEntries(fundingSources.map(source=>{
+    const names=[...planNames(db,projectId,source)];
+    return [source,{total:names.reduce((sum,name)=>sum+plannedRubric(db,projectId,name,source),0),available:Object.fromEntries(names.map(name=>[name,availableRubric(db,projectId,name,undefined,source)]))}];
+  }));
+}
+// Legacy overruns may be repaired incrementally. Never increase an existing
+// overrun or reduce any rubric below its previously executed coverage.
+function assertPlan(db,projectId,before) {
   const p=record(db,'projects',projectId);
   for(const source of fundingSources) {
     const names=planNames(db,projectId,source),total=[...names].reduce((sum,name)=>sum+plannedRubric(db,projectId,name,source),0),limit=cents(source==='Subvenção'?p.approved:p.counterpart,'',true);
-    check(total<=limit,`O planejamento de ${source} soma ${brl(total)} e supera o limite de ${brl(limit)} em ${brl(Math.max(0,total-limit))}. Ajuste as previsões desta fonte.`);
-    for(const name of names)check(availableRubric(db,projectId,name,undefined,source)>=0,`O planejamento de ${name} (${source}) não pode ficar abaixo do valor já executado.`);
+    check(total<=Math.max(limit,before?.[source]?.total ?? limit),`O planejamento de ${source} soma ${brl(total)} e supera o limite de ${brl(limit)} em ${brl(Math.max(0,total-limit))}. Ajuste as previsões desta fonte.`);
+    for(const name of names)check(availableRubric(db,projectId,name,undefined,source)>=Math.min(0,before?.[source]?.available?.[name] ?? 0),`O planejamento de ${name} (${source}) não pode ficar abaixo do valor já executado.`);
   }
 }
 function assertExpense(db,projectId,item,excludeId) {
@@ -169,15 +181,11 @@ async function payload(request) {
 }
 function storeFiles(db,projectId,entity,id,files) {
   for(const file of files) {
-    check(entity==='resources' ? file.kind==='proof' : file.kind!=='proof','Documento incompatível.');
+    check(entity==='resources' ? file.kind==='proof' : !['proof','project'].includes(file.kind),'Documento incompatível.');
     const col=entity==='expenses' ? 'expense_id' : 'resource_id';
     check(!db.prepare(`SELECT id FROM documents WHERE ${col}=? AND kind=?`).get(id,file.kind),'Já existe um documento desta categoria.',409);
     db.prepare(`INSERT INTO documents(id,project_id,${col},kind,name,mime,bytes,created_at) VALUES(?,?,?,?,?,?,?,?)`).run(randomUUID(),projectId,id,file.kind,file.name,file.mime,file.bytes,now());
   }
-}
-function assertComplete(db,expense,files=[]) {
-  const kinds=[...documents(db,'expense_id',expense.id || ''),...files].map(d=>d.kind);
-  check(required(expense).every(k=>kinds.includes(k)),'Anexe os documentos pendentes antes de confirmar a conferência bancária.');
 }
 function csvExport(state, projectId) {
   const list=state.expenses.filter(e=>e.projectId===projectId);
@@ -223,17 +231,19 @@ export function createApplication(db,{origin=process.env.APP_ORIGIN || 'http://l
         if(method==='PATCH'&&path[1]) {const {data}=await payload(request);check(path[1]!==user.id,'Não é permitido desativar a própria conta.');check(typeof data.active==='boolean','Situação inválida.');db.prepare('UPDATE users SET active=? WHERE id=?').run(data.active?1:0,path[1]);db.prepare('DELETE FROM sessions WHERE user_id=?').run(path[1]);audit(db,user,'access','users',path[1]);return json({ok:true});}
       }
       if(path[0]==='audit'&&method==='GET') {check(user.role==='admin','Acesso restrito.',403);return json(db.prepare('SELECT a.*,u.name FROM audit a JOIN users u ON u.id=a.user_id ORDER BY a.id DESC LIMIT 500').all());}
-      if(path[0]==='documents'&&path[1]&&method==='GET') {
-        const file=db.prepare('SELECT * FROM documents WHERE id=?').get(path[1]);check(file,'Arquivo não encontrado.',404);
+      if((path[0]==='documents'||path[0]==='projectDocuments')&&path[1]&&method==='GET') {
+        const general=path[0]==='projectDocuments';
+        const row=db.prepare(`SELECT * FROM ${general?'projectDocuments':'documents'} WHERE id=?`).get(path[1]);check(row,'Arquivo não encontrado.',404);
+        const file=general?{...JSON.parse(row.data),name:JSON.parse(row.data).filename,bytes:row.bytes}:row;
         return new Response(file.bytes,{headers:{'Content-Type':file.mime,'Content-Length':String(file.bytes.length),'Content-Disposition':`attachment; filename*=UTF-8''${encodeURIComponent(file.name)}`,'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'}});
       }
       if(path[0]==='reports'&&path[1]&&method==='GET') {
         const project=projectView(db,record(db,'projects',path[1])),state=snapshot(db,user),format=url.searchParams.get('format');
         const report={generatedAt:now(),company:record(db,'companies',project.companyId),project};
-        for(const entity of ['expenses','resources','schedule','budget','remaps','team','links','rubrics'])report[entity]=state[entity].filter(r=>r.projectId===project.id);
+        for(const entity of ['expenses','resources','schedule','budget','remaps','team','links','rubrics','projectDocuments'])report[entity]=state[entity].filter(r=>r.projectId===project.id);
         report.planning=fundingSources.flatMap(source=>[...planNames(db,project.id,source)].map(rubric=>({source,rubric,planned:plannedRubric(db,project.id,rubric,source)/100,executed:report.expenses.filter(e=>!e.draft&&e.rubric===rubric&&sourceOf(e)===source).reduce((sum,e)=>sum+cents(e.value),0)/100})));
         report.reconciliation={incoming:report.resources.filter(r=>resourceSource(r)==='Subvenção'),outgoing:report.expenses.filter(e=>!e.draft&&sourceOf(e)==='Subvenção'),balance:(cents(project.released,'',true)+cents(project.income,'',true)-cents(project.executedSubvention,'',true))/100};
-        if(format==='json')return json(report);
+        if(format==='json')return json(report,200,{'Content-Disposition':'attachment; filename="projeto-completo.json"'});
         if(format==='html')return new Response(renderReport(report),{headers:{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}});
         return new Response(csvExport(state,path[1]),{headers:{'Content-Type':'text/csv; charset=utf-8','Content-Disposition':'attachment; filename="lancamentos.csv"','Cache-Control':'no-store'}});
       }
@@ -247,7 +257,27 @@ export function createApplication(db,{origin=process.env.APP_ORIGIN || 'http://l
         const cached=db.prepare('SELECT * FROM requests WHERE user_id=? AND key=?').get(user.id,key);
         if(cached){check(cached.hash===requestHash,'Identificador reutilizado com outros dados.',409);return JSON.parse(cached.result);}
         let output;
-        if(method==='POST'&&path[1]==='import') {
+        if(entity==='projectDocuments') {
+          check(!path[2]&&(method==='POST'||path[1]),'Rota não encontrada.',404);
+          check(files.every(f=>f.kind==='project')&&files.length<=1,'Selecione apenas um documento do projeto.');
+          if(method==='POST') {
+            check(!path[1],'Rota não encontrada.',404);record(db,'projects',data.projectId);
+            check(files.length===1,'Selecione o arquivo do documento.');
+            const file=files[0],id=randomUUID();
+            const item={name:text(data.name,'Nome do documento',200),filename:file.name,mime:file.mime,size:file.bytes.length,createdAt:now()};
+            db.prepare('INSERT INTO projectDocuments(id,project_id,data,bytes) VALUES(?,?,?,?)').run(id,data.projectId,JSON.stringify(item),file.bytes);
+            output=record(db,entity,id);audit(db,user,'create',entity,id);
+          } else {
+            const current=record(db,entity,path[1]);check(current.version===data.version,'Este documento foi alterado. Atualize a página antes de salvar.',409);
+            if(method==='DELETE'){db.prepare('DELETE FROM projectDocuments WHERE id=?').run(current.id);output={id:current.id};}
+            else {
+              const item={...current,name:text(data.name,'Nome do documento',200)};
+              if(files.length){const file=files[0];Object.assign(item,{filename:file.name,mime:file.mime,size:file.bytes.length});db.prepare('UPDATE projectDocuments SET bytes=? WHERE id=?').run(file.bytes,current.id);}
+              db.prepare('UPDATE projectDocuments SET data=?,version=version+1 WHERE id=?').run(JSON.stringify(item),current.id);output=record(db,entity,current.id);
+            }
+            audit(db,user,method.toLowerCase(),entity,current.id,current);
+          }
+        } else if(method==='POST'&&path[1]==='import') {
           check(['team','schedule','budget'].includes(entity),'Importação indisponível.'); record(db,'projects',data.projectId);
           check(Array.isArray(data.rows)&&data.rows.length>0&&data.rows.length<=2000,'Importe entre 1 e 2.000 linhas.');
           const validated=data.rows.flatMap(row=>entity==='schedule'?scheduleRows(db,row,data.projectId):[validate(entity,row)]);
@@ -273,15 +303,16 @@ export function createApplication(db,{origin=process.env.APP_ORIGIN || 'http://l
             check(!all.some(n=>normalized(n)===normalized(item.name)),'Esta rubrica já está cadastrada.',409);
           }
           if(entity==='expenses'){item.rubric=canonicalRubric(db,data.projectId,item.rubric);if(!item.draft)assertExpense(db,data.projectId,item);}
+          const before=entity==='remaps'?planBaseline(db,data.projectId):undefined;
           if(entity==='remaps')Object.assign(item,applyRemap(db,user,data.projectId,data));
           if(entity==='schedule') {
             const created=scheduleRows(db,data,data.projectId).map(row=>insert(db,entity,row,data.projectId));
             assertPlan(db,data.projectId);output=created.length===1?created[0]:created;
-          } else {output=insert(db,entity,item,data.projectId);if(entity==='remaps')assertPlan(db,data.projectId);}
+          } else {output=insert(db,entity,item,data.projectId);if(entity==='remaps')assertPlan(db,data.projectId,before);}
           if(files.length){check(['expenses','resources'].includes(entity),'Anexos não aceitos nesta operação.');storeFiles(db,data.projectId,entity,output.id,files);}
           audit(db,user,'create',entity,Array.isArray(output)?output[0].id:output.id);
         } else {
-          const current=record(db,entity,path[1]);check(data.version===current.version,'Este registro foi alterado. Atualize a página antes de salvar.',409);
+          const current=record(db,entity,path[1]);const before=['schedule','remaps'].includes(entity)?planBaseline(db,current.projectId):undefined;check(data.version===current.version,'Este registro foi alterado. Atualize a página antes de salvar.',409);
           if(method==='DELETE') {
             check(['team','schedule','links','expenses','resources','remaps'].includes(entity),'Exclusão indisponível.',405);
             if(entity==='expenses')db.prepare('DELETE FROM documents WHERE expense_id=?').run(current.id);
@@ -289,7 +320,7 @@ export function createApplication(db,{origin=process.env.APP_ORIGIN || 'http://l
             if(entity==='remaps')undoRemap(db,user,current);
             if(entity==='schedule')check(!rows(db,'remaps',current.projectId).some(r=>r.sourceScheduleId===current.id||r.destinationScheduleId===current.id),'Este item está vinculado a um remanejamento.');
             db.prepare(`DELETE FROM ${entity} WHERE id=?`).run(current.id);
-            if(['schedule','remaps'].includes(entity))assertPlan(db,current.projectId);
+            if(['schedule','remaps'].includes(entity))assertPlan(db,current.projectId,before);
             output={id:current.id};
           }
           else if(entity==='expenses') {
@@ -304,7 +335,7 @@ export function createApplication(db,{origin=process.env.APP_ORIGIN || 'http://l
             } else if(data.action==='submit') {
               check(current.draft,'A despesa já foi registrada.',409);assertExpense(db,current.projectId,current,current.id);next.draft=false;next.status='Em análise';
             } else {
-              check(sourceOf(current)==='Subvenção','A conciliação bancária está disponível apenas para a conta de subvenção.');assertComplete(db,current);check(user.role==='admin','A conciliação exige administrador.',403);check(!current.draft,'Registre a despesa antes de conferir.');next.bankReference=text(data.bankReference,'Referência do extrato',200);next.status='Conciliado';
+              check(sourceOf(current)==='Subvenção','A conciliação bancária está disponível apenas para a conta de subvenção.');check(user.role==='admin','A conciliação exige administrador.',403);check(!current.draft,'Registre a despesa antes de conferir.');next.bankReference=text(data.bankReference,'Referência do extrato',200);next.status='Conciliado';
             }
             db.prepare('UPDATE expenses SET data=?,value_cents=?,version=version+1 WHERE id=?').run(JSON.stringify(next),cents(next.value),current.id);output=record(db,entity,current.id);
           } else if(entity==='resources') {
@@ -326,15 +357,16 @@ export function createApplication(db,{origin=process.env.APP_ORIGIN || 'http://l
               db.prepare('DELETE FROM remaps WHERE id=?').run(current.id);
               const next=applyRemap(db,user,current.projectId,{...current,...data},destinationStatus);next.date=current.date;
               db.prepare('INSERT INTO remaps(id,project_id,data,value_cents,version) VALUES(?,?,?,?,?)').run(current.id,current.projectId,JSON.stringify(next),cents(next.value),current.version+1);
-              assertPlan(db,current.projectId);
+              assertPlan(db,current.projectId,before);
             }
             output=record(db,entity,current.id);
           } else {
             check(['team','schedule','links'].includes(entity),'Edição indisponível para este registro.',405);
             const next=entity==='schedule'?prepareSchedule(db,data,current.projectId):validate(entity,data); const monetary=entity==='schedule';
+            if(entity==='links')next.addedAt=current.addedAt;
             if(monetary&&rows(db,'remaps',current.projectId).some(r=>r.sourceScheduleId===current.id||r.destinationScheduleId===current.id))check(next.value===current.value&&next.rubric===rubricName(current)&&sourceOf(next)===sourceOf(current),'Altere o valor, a rubrica ou a fonte pelo remanejamento vinculado.');
             if(monetary&&current.recurrenceId)Object.assign(next,{recurrenceId:current.recurrenceId,installment:current.installment,installments:current.installments});
-            db.prepare(`UPDATE ${entity} SET data=?,version=version+1${monetary?',value_cents=?':''} WHERE id=?`).run(JSON.stringify(next),...(monetary?[cents(next.value,'',true)]:[]),current.id);if(monetary)assertPlan(db,current.projectId);output=record(db,entity,current.id);
+            db.prepare(`UPDATE ${entity} SET data=?,version=version+1${monetary?',value_cents=?':''} WHERE id=?`).run(JSON.stringify(next),...(monetary?[cents(next.value,'',true)]:[]),current.id);if(monetary)assertPlan(db,current.projectId,before);output=record(db,entity,current.id);
           }
           audit(db,user,method.toLowerCase(),entity,current.id,current);
         }

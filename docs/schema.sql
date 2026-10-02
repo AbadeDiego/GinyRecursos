@@ -1,3 +1,4 @@
+-- Migração 4: documentos gerais nomeados em projectDocuments, separados dos comprovantes.
 -- Migração 3: source (Subvenção/Contrapartida) nos JSONs de schedule,
 -- expenses e remaps. sourceInferred sinaliza registros anteriores para revisão.
 -- As operações financeiras mantêm value_cents e version consistentes.
@@ -60,3 +61,6 @@ CREATE INDEX schedule_project ON schedule(project_id);
 CREATE INDEX sessions_expiry ON sessions(expires);
 
 CREATE INDEX team_project ON team(project_id);
+
+CREATE TABLE projectDocuments(id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id), data TEXT NOT NULL CHECK(json_valid(data)), bytes BLOB NOT NULL, version INTEGER NOT NULL DEFAULT 1);
+CREATE INDEX projectDocuments_project ON projectDocuments(project_id);

@@ -80,6 +80,7 @@ type Project = {
   period: string;
   startDate?: string;
   endDate?: string;
+  planningWarnings?:{source:string;planned:number;limit:number;excess:number}[];
   approved: number;
   counterpart: number;
   counterpartRealized: number;
@@ -268,7 +269,7 @@ const viewTitles: Record<View, { eyebrow: string; title: string; subtitle: strin
   resources: { eyebrow: "Fluxo financeiro", title: "Recursos e parcelas", subtitle: "Liberações, contrapartida e rendimentos da aplicação." },
   reconciliation: { eyebrow: "Conta vinculada", title: "Conciliação bancária", subtitle: "Confira entradas, despesas e extrato da conta de subvenção." },
   remaps: { eyebrow: "Orçamento aprovado", title: "Remanejamentos", subtitle: "Registre e acompanhe transferências entre rubricas." },
-  documents: { eyebrow: "Comprovação", title: "Central de documentos", subtitle: "Monitore cotações, notas fiscais e comprovantes de pagamento." },
+  documents: { eyebrow: "Arquivo do projeto", title: "Documentos do projeto", subtitle: "Organize o projeto original, termo de outorga e outros documentos gerais." },
   links: { eyebrow: "Referências do projeto", title: "Links importantes", subtitle: "Organize acessos, portais e referências úteis vinculados a este projeto." },
   reports: { eyebrow: "Prestação de contas", title: "Relatórios", subtitle: "Consolide a documentação e prepare as entregas ao concedente." },
 };
@@ -311,7 +312,8 @@ type RubricOption = {name:string;type:string};
 type RemapDraft = {sourceScheduleId:string;to:string;activity:string;month:string;year:number;value:number;reason:string};
 type Remap = {source?:FundingSource;destinationScheduleId?:string;sourceScheduleId?:string;sourceActivity?:string;activity?:string;month?:string;year?:number;id: string; projectId: string; from: string; to: string; value: number; reason: string; date: string; status: "Aprovado" | "Aguardando aprovação"; version: number; authorization?: string};
 type BudgetRow = CsvBudgetRow & {id: string; projectId: string};
-type State = {rubrics: (RubricOption & {projectId:string})[]; user: AppUser; companies: Company[]; projects: Project[]; expenses: Expense[]; team: TeamMember[]; schedule: ScheduleItem[]; links: ProjectLink[]; resources: Resource[]; budget: BudgetRow[]; remaps: Remap[]};
+type ProjectDocument = {id:string;projectId:string;version:number;name:string;filename:string;mime:string;size:number;createdAt:string};
+type State = {projectDocuments:ProjectDocument[];rubrics: (RubricOption & {projectId:string})[]; user: AppUser; companies: Company[]; projects: Project[]; expenses: Expense[]; team: TeamMember[]; schedule: ScheduleItem[]; links: ProjectLink[]; resources: Resource[]; budget: BudgetRow[]; remaps: Remap[]};
 const emptyProject: Project = {id:"",companyId:"",name:"Cadastre seu primeiro projeto",code:"",agency:"",period:"",approved:0,counterpart:0,counterpartRealized:0,released:0,executed:0,income:0,version:1};
 const emptyCompany: Company = {id:"",name:"",short:"",cnpj:"",city:"",state:"",responsible:"",email:"",phone:"",version:1};
 export default function Home() {
@@ -339,6 +341,10 @@ function Workspace({initial,onLogout}: {initial: State;onLogout:()=>void}) {
   const [newEntryOpen, setNewEntryOpen] = useState(false);
   const [resourceEntryOpen, setResourceEntryOpen] = useState(false);
   const [linkModalOpen, setLinkModalOpen] = useState(false);
+  const [editingLink,setEditingLink]=useState<ProjectLink|null>(null);
+  const [projectDocuments,setProjectDocuments]=useState(initial.projectDocuments || []);
+  const [documentModalOpen,setDocumentModalOpen]=useState(false);
+  const [editingDocument,setEditingDocument]=useState<ProjectDocument|null>(null);
   const [csvImportOpen, setCsvImportOpen] = useState(false);
   const [budgetRows,setBudgetRows]=useState(initial.budget);
   const [teamImportOpen, setTeamImportOpen] = useState(false);
@@ -363,7 +369,7 @@ function Workspace({initial,onLogout}: {initial: State;onLogout:()=>void}) {
   const [remaps,setRemaps]=useState(initial.remaps);
   const [editingResource,setEditingResource]=useState<Resource|null>(null);
   const [editingRemap,setEditingRemap]=useState<Remap|null>(null);
-  const [deletion,setDeletion]=useState<{entity:"schedule"|"resources"|"remaps";id:string;version:number;title:string;description:string}|null>(null);
+  const [deletion,setDeletion]=useState<{entity:"schedule"|"resources"|"remaps"|"projectDocuments";id:string;version:number;title:string;description:string}|null>(null);
   const confirmDeletion=()=>deletion&&commit(()=>api(deletion.entity+"/"+deletion.id,"DELETE",{version:deletion.version}),()=>{setDeletion(null);setEditingScheduleItem(null);setEditingResource(null);setEditingRemap(null);},"Registro excluído e saldos atualizados.");
   const [busy,setBusy]=useState(false),[saveError,setSaveError]=useState("");
   const saving=useRef(false);
@@ -390,7 +396,7 @@ function Workspace({initial,onLogout}: {initial: State;onLogout:()=>void}) {
     approved:(activeScheduleItems.filter(s=>(s.rubric||s.item)===r.name).reduce((sum,s)=>sum+Math.round(s.value*100),0)+remaps.filter(m=>m.projectId===activeProject.id&&m.status==="Aprovado"&&!m.sourceScheduleId).reduce((sum,m)=>sum+(m.to===r.name?Math.round(m.value*100):m.from===r.name?-Math.round(m.value*100):0),0))/100,
     executed:projectEntries.filter(e=>!e.draft&&e.rubric===r.name).reduce((sum,e)=>sum+Math.round(e.value*100),0)/100,
   }));
-  const refresh=async()=>{const state:State=await api("state");setCompanyList(state.companies);setProjectList(state.projects);setEntries(state.expenses);setProjectLinks(state.links);setTeamMembers(state.team);setScheduleItems(state.schedule);setResources(state.resources);setBudgetRows(state.budget);setRemaps(state.remaps);setCustomRubrics(state.rubrics || []);return state;};
+  const refresh=async()=>{const state:State=await api("state");setCompanyList(state.companies);setProjectList(state.projects);setEntries(state.expenses);setProjectLinks(state.links);setProjectDocuments(state.projectDocuments || []);setTeamMembers(state.team);setScheduleItems(state.schedule);setResources(state.resources);setBudgetRows(state.budget);setRemaps(state.remaps);setCustomRubrics(state.rubrics || []);return state;};
   const commit=async(action:()=>Promise<unknown>, after:()=>void, message:string)=>{
     if(saving.current)return; saving.current=true;setBusy(true);setSaveError("");
     let saved=false;
@@ -431,6 +437,8 @@ function Workspace({initial,onLogout}: {initial: State;onLogout:()=>void}) {
   const addEntry = (entry: ExpenseDraft, draft: boolean, files:Record<string,File>) => commit(()=>api("expenses","POST",{...entry,projectId:activeProject.id,draft},files),()=>{setNewEntryOpen(false);setView("entries");},draft?"Rascunho salvo.":"Despesa registrada.");
   const addResourceEntry = (entry:ResourceEntryDraft) => { const {proof,...data}=entry; return commit(()=>api("resources","POST",{...data,projectId:activeProject.id},proof?{proof}:undefined),()=>setResourceEntryOpen(false),"Recurso financeiro registrado."); };
   const addProjectLink = (draft:{name:string;url:string}) => commit(()=>api("links","POST",{...draft,projectId:activeProject.id,url:/^https?:\/\//i.test(draft.url)?draft.url:`https://${draft.url}`}),()=>setLinkModalOpen(false),"Link adicionado.");
+  const saveProjectLink=(draft:{name:string;url:string})=>commit(()=>api("links/"+editingLink!.id,"PATCH",{...draft,version:editingLink!.version,url:/^https?:\/\//i.test(draft.url)?draft.url:`https://${draft.url}`}),()=>setEditingLink(null),"Link atualizado.");
+  const saveProjectDocument=(name:string,file?:File)=>commit(()=>api(editingDocument?"projectDocuments/"+editingDocument.id:"projectDocuments",editingDocument?"PATCH":"POST",{name,projectId:activeProject.id,version:editingDocument?.version},file?{project:file}:undefined),()=>{setDocumentModalOpen(false);setEditingDocument(null);},"Documento salvo.");
   const openCsvImport=()=>{setNewEntryOpen(false);setCsvImportOpen(true);};
   const finishCsvImport=(rows:CsvBudgetRow[])=>commit(()=>api("budget/import","POST",{projectId:activeProject.id,rows}),()=>{setCsvImportOpen(false);setView("overview");},"Orçamento importado e salvo.");
   const finishTeamImport=(rows:CsvTeamRow[])=>commit(()=>api("team/import","POST",{projectId:activeProject.id,rows:rows.map(r=>({name:r.nome,role:r.funcao,activity:r.atividade}))}),()=>setTeamImportOpen(false),"Membros adicionados à equipe.");
@@ -468,7 +476,7 @@ function Workspace({initial,onLogout}: {initial: State;onLogout:()=>void}) {
             const Icon = item.icon;
             return (
               <button key={item.id} className={view === item.id ? "active" : ""} onClick={() => navigate(item.id)}>
-                <Icon size={18} strokeWidth={2} /><span>{item.label}</span>{item.id === "documents" && pendingProjectDocuments > 0 && <em>{pendingProjectDocuments}</em>}
+                <Icon size={18} strokeWidth={2} /><span>{item.label}</span>{item.id === "entries" && pendingProjectDocuments > 0 && <em>{pendingProjectDocuments}</em>}
               </button>
             );
           })}
@@ -479,8 +487,8 @@ function Workspace({initial,onLogout}: {initial: State;onLogout:()=>void}) {
           <div className="help-card">
             <div className="help-icon"><ShieldCheck size={19} /></div>
             <strong>{projectEntries.length > 0 ? "Projeto organizado" : "Projeto pronto para começar"}</strong>
-            <p>{projectEntries.length > 0 ? `${projectDocumentCompletion}% dos comprovantes obrigatórios já foram anexados.` : "O checklist será atualizado com o primeiro lançamento."}</p>
-            <button onClick={() => navigate("documents")}>{pendingProjectDocuments > 0 ? "Ver pendências" : "Ver checklist"} <ArrowRight size={14} /></button>
+            <p>{projectEntries.length > 0 ? `${projectDocumentCompletion}% dos anexos do checklist já foram enviados.` : "O checklist será atualizado com o primeiro lançamento."}</p>
+            <button onClick={() => navigate("entries")}>{pendingProjectDocuments > 0 ? "Ver pendências" : "Ver checklist"} <ArrowRight size={14} /></button>
           </div>
           <div className="user-card"><div className="avatar">{initial.user.name.slice(0,2).toUpperCase()}</div><div><strong>{initial.user.name}</strong><span>{initial.user.role === "viewer" ? "Consulta" : "Gestão de projetos"}</span></div><MoreHorizontal size={18} /></div>
         </div>
@@ -540,6 +548,10 @@ function Workspace({initial,onLogout}: {initial: State;onLogout:()=>void}) {
                 <button className="primary-button" onClick={() => setRemapOpen(true)}><Plus size={18} /> Novo remanejamento</button>
               ) : view === "links" ? (
                 <button className="primary-button" onClick={() => setLinkModalOpen(true)}><Plus size={18} /> Adicionar link</button>
+              ) : view === "documents" ? (
+                <button className="primary-button" onClick={()=>setDocumentModalOpen(true)}><Plus size={18}/> Adicionar documento</button>
+              ) : view === "reports" ? (
+                <span className="automatic-heading-status"><ShieldCheck size={16}/> Dados atualizados do projeto</span>
               ) : view === "reconciliation" ? (
                 <span className="automatic-heading-status"><RefreshCw size={16} /> Registros salvos</span>
               ) : (
@@ -548,6 +560,7 @@ function Workspace({initial,onLogout}: {initial: State;onLogout:()=>void}) {
             </div>
           </div>
 
+          {(view==="schedule"||view==="remaps")&&activeProject.planningWarnings?.map(w=><div className="notice-banner" key={w.source}><AlertCircle size={21}/><div><strong>{w.source}: planejamento {money(w.excess)} acima do limite</strong><span>Planejado: {money(w.planned)} · Limite: {money(w.limit)}. Você pode editar e reduzir as previsões sem aumentar o excesso. Valores já executados continuam protegidos.</span></div></div>)}
           {view === "overview" && <Overview project={activeProject} rubrics={activeRubrics} entries={projectEntries} navigate={navigate} openEntry={setSelectedExpense} newEntry={() => setNewEntryOpen(true)} importCsv={openCsvImport} />}
           {view === "companies" && <CompaniesView companies={companyList} projects={projectList} selectedCompanyId={profileCompanyId} activeProjectId={projectId} onSelectCompany={setProfileCompanyId} onNewCompany={() => setCompanyModalOpen(true)} onNewProject={startProjectCreation} onSwitchProject={switchProject} />}
           {view === "team" && <TeamView project={activeProject} members={activeTeamMembers} onImport={() => setTeamImportOpen(true)} onAdd={() => setTeamMemberCreateOpen(true)} onEdit={setEditingTeamMember} onDelete={setTeamMemberToDelete} />}
@@ -556,8 +569,8 @@ function Workspace({initial,onLogout}: {initial: State;onLogout:()=>void}) {
           {view === "resources" && <Resources project={activeProject} resources={resources.filter(r=>r.projectId===activeProject.id)} onAdd={()=>setResourceEntryOpen(true)} onEdit={setEditingResource} onDelete={r=>setDeletion({entity:"resources",id:r.id,version:r.version,title:"Excluir recurso?",description:`${r.kind} · ${money(r.value)}. O registro e seus comprovantes serão excluídos e os saldos serão recalculados.`})} />}
           {view === "reconciliation" && <Reconciliation project={activeProject} entries={projectEntries} resources={resources.filter(r=>r.projectId===activeProject.id)} />}
           {view === "remaps" && <Remaps project={activeProject} remaps={remaps.filter(r=>r.projectId===activeProject.id)} onEdit={setEditingRemap} onDelete={r=>setDeletion({entity:"remaps",id:r.id,version:r.version,title:"Excluir remanejamento?",description:"O valor será devolvido à origem e a previsão criada no destino será removida. A operação será bloqueada se comprometer despesas já registradas ou remanejamentos posteriores."})} openModal={() => setRemapOpen(true)} />}
-          {view === "documents" && <Documents entries={projectEntries} openEntry={setSelectedExpense} />}
-          {view === "links" && <ProjectLinksView project={activeProject} links={activeProjectLinks} onAdd={() => setLinkModalOpen(true)} />}
+          {view === "documents" && <Documents documents={projectDocuments.filter(d=>d.projectId===activeProject.id)} onAdd={()=>setDocumentModalOpen(true)} onEdit={setEditingDocument} onDelete={d=>setDeletion({entity:"projectDocuments",id:d.id,version:d.version,title:"Excluir documento?",description:`O documento “${d.name}” e seu arquivo serão excluídos do projeto.`})} />}
+          {view === "links" && <ProjectLinksView onEdit={setEditingLink} project={activeProject} links={activeProjectLinks} onAdd={() => setLinkModalOpen(true)} />}
           {view === "reports" && <Reports project={activeProject} entries={projectEntries} />}
         </div>
       </main>
@@ -566,6 +579,8 @@ function Workspace({initial,onLogout}: {initial: State;onLogout:()=>void}) {
       {deletion && <DeleteRecordModal title={deletion.title} description={deletion.description} onClose={()=>setDeletion(null)} onConfirm={confirmDeletion}/>}
       {editingResource && <ResourceEntryModal initial={editingResource} project={activeProject} onClose={()=>setEditingResource(null)} onSave={editResourceEntry}/>}
       {resourceEntryOpen && <ResourceEntryModal project={activeProject} onClose={() => setResourceEntryOpen(false)} onSave={addResourceEntry} />}
+      {(documentModalOpen||editingDocument)&&<ProjectDocumentModal initial={editingDocument||undefined} onClose={()=>{setDocumentModalOpen(false);setEditingDocument(null);}} onSave={saveProjectDocument}/>}
+      {editingLink&&<ProjectLinkModal project={activeProject} initial={editingLink} onClose={()=>setEditingLink(null)} onSave={saveProjectLink}/>}
       {linkModalOpen && <ProjectLinkModal project={activeProject} onClose={() => setLinkModalOpen(false)} onSave={addProjectLink} />}
       {companyModalOpen && <CompanyModal onClose={() => setCompanyModalOpen(false)} onSave={createCompany} />}
       {projectModalOpen && <ProjectModal companies={companyList} initialCompanyId={projectModalCompanyId} onClose={() => setProjectModalOpen(false)} onSave={createProject} />}
@@ -832,7 +847,7 @@ function Overview({
         <section className="notice-banner">
           <div className="notice-icon"><AlertCircle size={19} /></div>
           <div><strong>{pendingDocs + pendingReview} pendências precisam da sua atenção</strong><span>Há {pendingDocs} lançamentos com documentos incompletos e {pendingReview} aguardando revisão.</span></div>
-          <button onClick={() => navigate("documents")}>Revisar agora <ArrowRight size={16} /></button>
+          <button onClick={() => navigate("entries")}>Revisar agora <ArrowRight size={16} /></button>
         </section>
       ) : hasBudget ? (
         <section className="notice-banner onboarding-notice">
@@ -999,6 +1014,7 @@ function Entries({
         <div><span>Documentação pendente</span><strong className="warning-text">{entries.filter((entry) => entry.docs < entry.requiredDocs).length}</strong><small>itens para revisar</small></div>
         <div><span>Período</span><strong>{start || "Início"} / {end || "Atual"}</strong><small>datas selecionadas</small></div>
       </section>
+      <ExpenseDocuments entries={entries} openEntry={openEntry}/>
       <section className="panel">
         <div className="toolbar">
           <div className="search-field"><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar por fornecedor, ID ou rubrica" /></div>
@@ -1027,62 +1043,48 @@ function Reconciliation({project,entries,resources}:{project:Project;entries:Exp
 }
 
 function Remaps({project,remaps,openModal,onEdit,onDelete}:{project:Project;remaps:Remap[];openModal:()=>void;onEdit:(r:Remap)=>void;onDelete:(r:Remap)=>void}) {
- return <><section className="summary-strip"><div><span>Subvenção aprovada</span><strong>{money(project.approved)}</strong></div><div><span>Remanejamentos aplicados</span><strong>{money(remaps.filter(r=>r.status==="Aprovado").reduce((s,r)=>s+r.value,0))}</strong></div></section><section className="panel"><div className="panel-header"><div><h2>Remanejamentos</h2><p>Os valores são transferidos no cronograma assim que você salva.</p></div><button className="primary-button" onClick={openModal}>Novo remanejamento</button></div><div className="remap-list">{remaps.map(r=><article className="remap-card" key={r.id}><div className="remap-card-top"><span className="category-pill">{r.status==="Aprovado"?"Aplicado":"Pendente anterior"} · {sourceOf(r)}</span><strong>{money(r.value)}</strong></div><div className="remap-flow"><div><small>Origem</small><strong>{r.from}</strong>{r.sourceActivity&&<p>{r.sourceActivity}</p>}</div><ArrowRight/><div><small>Destino</small><strong>{r.to}</strong>{r.activity&&<p>{r.activity} · {r.month}/{r.year}</p>}</div></div><p>{r.reason}</p><div className="expense-actions"><button className="secondary-button small" onClick={()=>onEdit(r)}><Pencil size={14}/> Editar</button><button className="delete-row-button" onClick={()=>onDelete(r)}><Trash2 size={14}/> Excluir</button></div></article>)}{!remaps.length&&<div className="empty-state compact"><p>Nenhum remanejamento registrado.</p></div>}</div></section></>;
+ return <><section className="summary-strip"><div><span>Subvenção aprovada</span><strong>{money(project.approved)}</strong></div><div><span>Remanejamentos aplicados</span><strong>{money(remaps.filter(r=>r.status==="Aprovado").reduce((s,r)=>s+r.value,0))}</strong></div></section><section className="panel"><div className="panel-header"><div><h2>Remanejamentos</h2><p>Os valores são transferidos no cronograma assim que você salva.</p></div><button className="primary-button" onClick={openModal}>Novo remanejamento</button></div><div className="remap-list">{remaps.map(r=><article className="remap-card" key={r.id}><div className="remap-card-top"><span className="category-pill">{r.status==="Aprovado"?"Aplicado":"Pendente anterior"} · {sourceOf(r)}</span><strong>{money(r.value)}</strong></div><div className="remap-flow"><div><small>Origem</small><strong>{r.from}</strong>{r.sourceActivity&&<p>{r.sourceActivity}</p>}</div><ArrowRight/><div><small>Destino</small><strong>{r.to}</strong>{r.activity&&<p>{r.activity} · {r.month}/{r.year}</p>}</div></div><RemapReason reason={r.reason}/><div className="remap-footer"><span>Registrado em {r.date.split("-").reverse().join("/")}</span><div className="expense-actions"><button className="secondary-button small" onClick={()=>onEdit(r)}><Pencil size={14}/> Editar</button><button className="delete-row-button" onClick={()=>onDelete(r)}><Trash2 size={14}/> Excluir</button></div></div></article>)}{!remaps.length&&<div className="empty-state compact"><p>Nenhum remanejamento registrado.</p></div>}</div></section></>;
 }
 
-function Documents({ entries, openEntry }: { entries: Expense[]; openEntry: (expense: Expense) => void }) {
-  const [filter, setFilter] = useState("Pendentes");
-  const visible = entries.filter((entry) => filter === "Todos" || (filter === "Pendentes" ? entry.docs < entry.requiredDocs : entry.docs === entry.requiredDocs));
-  const requiredDocuments = entries.reduce((sum, entry) => sum + entry.requiredDocs, 0);
-  const sentDocuments = entries.reduce((sum, entry) => sum + entry.docs, 0);
-  const completeness = percent(sentDocuments, requiredDocuments);
-  const invoicesSent = entries.filter((entry) => entry.documents?.some(d=>d.kind==="invoice")).length;
-  const paymentsSent = entries.filter((entry) => entry.documents?.some(d=>d.kind==="payment")).length;
-  const thirdPartyEntries = entries.filter((entry) => entry.rubric.includes("Terceiros"));
-  const quotationsRequired = thirdPartyEntries.length * 3;
-  const quotationsSent = thirdPartyEntries.reduce((sum, entry) => sum + (entry.documents?.filter(d=>d.kind.startsWith("quote")).length || 0), 0);
-  return (
-    <>
-      <section className="document-overview">
-        <article className="document-score">
-          <div className="score-ring"><strong>{completeness}%</strong><span>completo</span></div>
-          <div><span>Checklist documental</span><strong>{sentDocuments} de {requiredDocuments} documentos enviados</strong><p>{requiredDocuments === 0 ? "O checklist será criado com o primeiro lançamento." : `Faltam ${requiredDocuments - sentDocuments} arquivos para completar a prestação do período.`}</p></div>
-        </article>
-        <article><div className="document-stat-icon"><FileText size={20} /></div><span>Notas fiscais</span><strong>{invoicesSent}/{entries.length}</strong><ProgressBar value={percent(invoicesSent, entries.length)} /></article>
-        <article><div className="document-stat-icon amber"><Paperclip size={20} /></div><span>Comprovantes</span><strong>{paymentsSent}/{entries.length}</strong><ProgressBar value={percent(paymentsSent, entries.length)} tone="amber" /></article>
-        <article><div className="document-stat-icon blue"><ClipboardCheck size={20} /></div><span>Cotações</span><strong>{quotationsSent}/{quotationsRequired}</strong><ProgressBar value={percent(quotationsSent, quotationsRequired)} tone="blue" /></article>
-      </section>
-      <section className="panel">
-        <div className="panel-header"><div><h2>Checklist por lançamento</h2><p>Clique em um lançamento para visualizar e baixar os arquivos enviados.</p></div><div className="segmented-control">{["Pendentes", "Completos", "Todos"].map((item) => <button key={item} className={filter === item ? "active" : ""} onClick={() => setFilter(item)}>{item}</button>)}</div></div>
-        <div className="document-list">
-          {visible.map((entry) => (
-            <button className="document-row" key={entry.id} onClick={() => openEntry(entry)}>
-              <div className={"document-file-icon " + (entry.docs === entry.requiredDocs ? "complete" : "")}>{entry.docs === entry.requiredDocs ? <FileCheck2 size={20} /> : <FileText size={20} />}</div>
-              <div className="document-copy"><span>{entry.id} · {entry.rubric}</span><strong>{entry.supplier}</strong><small>{entry.description}</small></div>
-              <div className="document-checks">
-                <span className={entry.documents?.some(d=>d.kind==="invoice") ? "done" : "missing"}>Nota fiscal</span>
-                <span className={entry.documents?.some(d=>d.kind==="payment") ? "done" : ""}>{entry.documents?.some(d=>d.kind==="payment") ? <Check size={14} /> : <AlertCircle size={14} />} Pagamento</span>
-                {entry.rubric.includes("Terceiros") && <span className={entry.docs === entry.requiredDocs ? "done" : "missing"}>{entry.docs === entry.requiredDocs ? <Check size={14} /> : <AlertCircle size={14} />} 3 cotações</span>}
-              </div>
-              <div className="document-progress"><strong>{entry.docs}/{entry.requiredDocs}</strong><span>arquivos</span></div>
-              <ChevronRight size={18} />
-            </button>
-          ))}
-          {visible.length === 0 && <div className="empty-state compact"><FolderOpen size={28} /><strong>Nenhum documento neste filtro</strong><p>Os comprovantes aparecerão aqui conforme os lançamentos forem registrados.</p></div>}
-        </div>
-      </section>
-    </>
-  );
+function RemapReason({reason}:{reason:string}) {
+ const [expanded,setExpanded]=useState(false);
+ return <div className="remap-reason"><span className="detail-label">Justificativa do remanejamento</span><p className={expanded||(reason.length<=180&&reason.split("\n").length<=3)?"":"clamped"}>{reason}</p>{(reason.length>180||reason.split("\n").length>3)&&<button className="text-button" aria-expanded={expanded} onClick={()=>setExpanded(!expanded)}>{expanded?"Recolher justificativa":"Ler justificativa completa"}<ChevronDown size={15}/></button>}</div>;
+}
+
+const expenseDocumentLabels:Record<string,string>={invoice:"Nota fiscal / recibo",payment:"Comprovante",quote1:"Orçamento 1",quote2:"Orçamento 2",quote3:"Orçamento 3"};
+function ExpenseDocuments({entries,openEntry}:{entries:Expense[];openEntry:(e:Expense)=>void}) {
+ const [pendingOnly,setPendingOnly]=useState(false);
+ const groups=Array.from(new Set(entries.map(e=>JSON.stringify([e.rubric,sourceOf(e)])))).map(key=>{
+   const [rubric,source]=JSON.parse(key) as [string,string];
+   const list=entries.filter(e=>e.rubric===rubric&&sourceOf(e)===source),complete=list.filter(e=>e.docs===e.requiredDocs).length;
+   return {key,rubric,source,list,complete};
+ });
+ return <section className="panel expense-document-panel"><div className="panel-header"><div><h2>Documentos por rubrica</h2><p>Nota fiscal, comprovante e três orçamentos por lançamento. Todos os anexos são opcionais.</p></div><label className="check-filter"><input type="checkbox" checked={pendingOnly} onChange={e=>setPendingOnly(e.target.checked)}/> Somente com anexos a completar</label></div>
+ <div className="rubric-checklist">{groups.filter(g=>!pendingOnly||g.complete<g.list.length).map(g=><details key={g.key} className="rubric-document-group"><summary><div><strong>{g.rubric}</strong><small>{g.source} · {g.list.length} lançamento(s)</small></div><span className={g.complete===g.list.length?"checklist-status complete":"checklist-status"}>{g.complete===g.list.length?<CheckCircle2 size={17}/>:<Paperclip size={17}/>} {g.complete}/{g.list.length} com todos os anexos</span><ChevronDown size={18}/></summary><div className="rubric-document-items">{g.list.filter(e=>!pendingOnly||e.docs<e.requiredDocs).map(e=><button key={e.id} className="expense-document-row" onClick={()=>openEntry(e)}><div><strong>{e.supplier}</strong><span>{e.description}</span><small>{e.date.split("-").reverse().join("/")} · {money(e.value)}{e.draft?" · Rascunho":""}</small></div><div className="document-checks">{Object.entries(expenseDocumentLabels).map(([kind,label])=><span key={kind} className={e.documents?.some(d=>d.kind===kind)?"done":"missing"}>{e.documents?.some(d=>d.kind===kind)?<Check size={13}/>:<Clock3 size={13}/>} {label}</span>)}</div><span className="document-row-action">Ver / anexar <ChevronRight size={16}/></span></button>)}</div></details>)}</div>
+ {(!groups.length||pendingOnly&&groups.every(g=>g.complete===g.list.length))&&<div className="empty-state compact"><FileCheck2 size={26}/><p>{groups.length?"Todos os lançamentos têm os cinco anexos.":"O acompanhamento aparecerá quando você cadastrar o primeiro lançamento."}</p></div>}</section>;
+}
+
+function Documents({documents,onAdd,onEdit,onDelete}:{documents:ProjectDocument[];onAdd:()=>void;onEdit:(d:ProjectDocument)=>void;onDelete:(d:ProjectDocument)=>void}) {
+ const [query,setQuery]=useState("");
+ const visible=documents.filter(d=>(d.name+" "+d.filename).toLocaleLowerCase().includes(query.toLocaleLowerCase()));
+ return <section className="panel project-document-panel"><div className="panel-header"><div><h2>Arquivo do projeto <span className="count-badge">{documents.length}</span></h2><p>Documentos institucionais, versões do projeto e termos assinados.</p></div><div className="search-field"><Search size={17}/><input aria-label="Buscar documento" value={query} onChange={e=>setQuery(e.target.value)} placeholder="Buscar pelo nome do documento"/></div></div>
+ <div className="project-document-grid">{visible.map(d=><article key={d.id} className="project-document-card"><div className="project-document-icon"><FileText size={25}/><span>{d.mime==="application/pdf"?"PDF":"IMAGEM"}</span></div><h3>{d.name}</h3><p title={d.filename}>{d.filename}</p><small>{(d.size/1024/1024).toLocaleString("pt-BR",{maximumFractionDigits:2})} MB · {d.createdAt.slice(0,10).split("-").reverse().join("/")}</small><div className="project-document-actions"><a className="secondary-button small" href={"/api/projectDocuments/"+d.id}><Download size={15}/> Baixar</a><button className="icon-button" aria-label={"Editar "+d.name} onClick={()=>onEdit(d)}><Pencil size={16}/></button><button className="icon-button" aria-label={"Excluir "+d.name} onClick={()=>onDelete(d)}><Trash2 size={16}/></button></div></article>)}</div>
+ {!visible.length&&<div className="empty-state"><FolderOpen size={32}/><strong>{query?"Nenhum documento encontrado":"Guarde os documentos do projeto aqui"}</strong><p>{query?"Tente outro nome.":"Adicione o projeto original, o termo de outorga ou outro arquivo e dê um nome para encontrá-lo facilmente."}</p>{!query&&<button className="primary-button" onClick={onAdd}><Plus size={17}/> Adicionar primeiro documento</button>}</div>}</section>;
+}
+
+function ProjectDocumentModal({initial,onClose,onSave}:{initial?:ProjectDocument;onClose:()=>void;onSave:(name:string,file?:File)=>void}) {
+ const [name,setName]=useState(initial?.name||""),[file,setFile]=useState<File|undefined>();
+ return <div className="modal-backdrop"><section className="modal" role="dialog" aria-modal="true" aria-labelledby="project-document-title"><div className="modal-header"><div><span>Arquivo do projeto</span><h2 id="project-document-title">{initial?"Editar documento":"Adicionar documento"}</h2></div><button className="icon-button" aria-label="Fechar" onClick={onClose}><X size={20}/></button></div><div className="modal-body"><label className="field"><span>Nome do documento *</span><input autoFocus maxLength={200} value={name} onChange={e=>setName(e.target.value)} placeholder="Ex.: Projeto original ou Termo de outorga"/></label><div className="upload-section"><UploadBox label={initial?"Substituir arquivo (opcional)":"Arquivo do documento *"} file={file?.name} onFile={setFile}/>{initial&&<p className="panel-note">Arquivo atual: {initial.filename}. Se não selecionar outro, o arquivo será mantido.</p>}</div><p className="panel-note">PDF, JPG ou PNG · até 10 MB por arquivo.</p></div><div className="modal-footer"><button className="secondary-button" onClick={onClose}>Cancelar</button><button className="primary-button" disabled={!name.trim()||(!initial&&!file)||Boolean(file&&file.size>10*1024*1024)} onClick={()=>onSave(name,file)}>Salvar documento</button></div>{file&&file.size>10*1024*1024&&<p role="alert" className="panel-note">O arquivo deve ter no máximo 10 MB.</p>}</section></div>;
 }
 
 function ProjectLinksView({
   project,
   links,
-  onAdd,
+  onAdd, onEdit,
 }: {
   project: Project;
   links: ProjectLink[];
-  onAdd: () => void;
+  onAdd: () => void; onEdit:(link:ProjectLink)=>void;
 }) {
   return (
     <>
@@ -1110,7 +1112,7 @@ function ProjectLinksView({
                     <td><div className="project-link-name"><span><Link2 size={17} /></span><strong>{link.name}</strong></div></td>
                     <td><a className="project-link-url" href={link.url} target="_blank" rel="noreferrer" title={link.url}>{link.url.replace(/^https?:\/\//i, "").replace(/\/$/, "")}</a></td>
                     <td><span className="project-link-date"><CalendarDays size={15} /> {link.addedAt}</span></td>
-                    <td><a className="secondary-button small project-link-open" href={link.url} target="_blank" rel="noreferrer" aria-label={`Abrir ${link.name}`}>Abrir link <ExternalLink size={14} /></a></td>
+                    <td><div className="expense-actions"><button className="secondary-button small" onClick={()=>onEdit(link)}><Pencil size={14}/> Editar</button><a className="secondary-button small project-link-open" href={link.url} target="_blank" rel="noreferrer" aria-label={`Abrir ${link.name}`}>Abrir link <ExternalLink size={14} /></a></div></td>
                   </tr>
                 ))}
               </tbody>
@@ -1270,7 +1272,11 @@ function ScheduleStatusBadge({ status }: { status: ScheduleStatus }) {
 }
 
 function Reports({project,entries}:{project:Project;entries:Expense[]}) {
- return <section className="panel"><div className="panel-header"><div><h2>Relatório completo do projeto</h2><p>{project.name} · {project.code}</p></div></div><div className="modal-body"><section className="summary-strip"><div><span>Executado · Subvenção</span><strong>{money(project.executedSubvention||0)}</strong></div><div><span>Executado · Contrapartida</span><strong>{money(project.executedCounterpart||0)}</strong></div><div><span>Lançamentos</span><strong>{entries.length}</strong></div></section><p>Resumo financeiro por fonte, execução por rubrica, recursos e parcelas, despesas e pendências documentais, conciliação da subvenção, cronograma, remanejamentos, equipe e links do projeto.</p><div className="expense-actions"><a className="primary-button" href={"/api/reports/"+project.id+"?format=html"} target="_blank" rel="noreferrer"><FileText size={18}/> Abrir relatório / Salvar PDF</a><a className="secondary-button" href={"/api/reports/"+project.id}><Download size={18}/> Exportar lançamentos CSV</a><a className="secondary-button" href={"/api/reports/"+project.id+"?format=json"} target="_blank" rel="noreferrer">Dados completos JSON</a></div><p>Para baixar em PDF, abra o relatório e escolha “Imprimir / Salvar em PDF”. Os comprovantes originais ficam disponíveis na aba Documentos.</p></div></section>;
+ const pending=entries.filter(e=>e.docs<e.requiredDocs).length;
+ return <div className="reports-hub"><section className="panel report-primary"><div className="report-primary-copy"><span className="report-eyebrow"><FileText size={18}/> RELATÓRIO GERENCIAL</span><h2>Uma visão completa do seu projeto</h2><p>Reúna o planejamento, a execução financeira e os registros do projeto em um documento pronto para compartilhar.</p><div className="report-project-name"><strong>{project.name}</strong><span>{project.code} · {project.agency}</span></div><a className="primary-button" href={"/api/reports/"+project.id+"?format=html"} target="_blank" rel="noreferrer"><ExternalLink size={18}/> Visualizar relatório</a><small className="report-pdf-hint">Na visualização, use “Imprimir / Salvar em PDF” para baixar uma cópia.</small></div><div className="report-contents"><h3>O que você encontrará</h3>{[{icon:CircleDollarSign,title:"Finanças e execução",text:"Resumo por fonte, rubricas, recursos e parcelas."},{icon:CalendarDays,title:"Planejamento do projeto",text:"Cronograma, remanejamentos e equipe técnica."},{icon:ClipboardCheck,title:"Prestação de contas",text:"Despesas, checklist de anexos e conciliação da subvenção."},{icon:FolderOpen,title:"Documentos e referências",text:"Relação de documentos gerais e links do projeto."}].map(({icon:Icon,title,text})=><div key={title}><Icon size={20}/><span><strong>{title}</strong><small>{text}</small></span></div>)}</div></section>
+ <section className="summary-strip"><div><span>Executado · Subvenção</span><strong>{money(project.executedSubvention||0)}</strong></div><div><span>Executado · Contrapartida</span><strong>{money(project.executedCounterpart||0)}</strong></div><div><span>Lançamentos</span><strong>{entries.length}</strong><small>{pending} com anexos a completar</small></div></section>
+ <section className="panel report-export"><div className="report-export-icon"><FileSpreadsheet size={26}/></div><div><h3>Trabalhar com os lançamentos em planilha</h3><p>Exporte as despesas do projeto para analisar no Excel ou Google Sheets.</p></div><a className="secondary-button" href={"/api/reports/"+project.id}><Download size={17}/> Baixar CSV</a></section>
+ <details className="panel report-advanced"><summary>Exportação de dados para uso técnico <ChevronDown size={17}/></summary><div><p>Baixe os registros estruturados do projeto em JSON. Os arquivos anexados não são incluídos; baixe-os em Lançamentos ou Documentos.</p><a className="secondary-button small" href={"/api/reports/"+project.id+"?format=json"}><Download size={16}/> Baixar dados JSON</a></div></details></div>;
 }
 
 function normalizeCsvText(value: string) {
@@ -1888,23 +1894,23 @@ function ResourceEntryModal({project,initial,onClose,onSave}:{project:Project;in
 }
 
 function ProjectLinkModal({
-  project,
+  project, initial,
   onClose,
   onSave,
 }: {
-  project: Project;
+  project: Project; initial?:ProjectLink;
   onClose: () => void;
   onSave: (draft: { name: string; url: string }) => void;
 }) {
-  const [name, setName] = useState("");
-  const [url, setUrl] = useState("");
+  const [name, setName] = useState(initial?.name||"");
+  const [url, setUrl] = useState(initial?.url||"");
   const normalizedPreview = url.trim() && !/^https?:\/\//i.test(url.trim()) ? `https://${url.trim()}` : url.trim();
   const valid = Boolean(name.trim() && url.trim() && normalizedPreview.includes("."));
 
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       <div className="modal project-link-modal" role="dialog" aria-modal="true" aria-labelledby="project-link-modal-title">
-        <div className="modal-header"><div><span>Referência do projeto</span><h2 id="project-link-modal-title">Adicionar link importante</h2></div><button className="icon-button" onClick={onClose} aria-label="Fechar"><X size={19} /></button></div>
+        <div className="modal-header"><div><span>Referência do projeto</span><h2 id="project-link-modal-title">{initial?"Editar link importante":"Adicionar link importante"}</h2></div><button className="icon-button" onClick={onClose} aria-label="Fechar"><X size={19} /></button></div>
         <div className="modal-body">
           <div className="project-link-project-note"><span><Link2 size={18} /></span><div><small>Projeto selecionado</small><strong>{project.name}</strong></div></div>
           <div className="form-grid project-link-form">
@@ -1913,7 +1919,7 @@ function ProjectLinkModal({
           </div>
           <div className="project-link-privacy"><ShieldCheck size={16} /><span>Este link ficará organizado somente no projeto selecionado.</span></div>
         </div>
-        <div className="modal-footer"><button className="secondary-button" onClick={onClose}>Cancelar</button><button className="primary-button" disabled={!valid} onClick={() => onSave({ name, url })}><Plus size={17} /> Adicionar link</button></div>
+        <div className="modal-footer"><button className="secondary-button" onClick={onClose}>Cancelar</button><button className="primary-button" disabled={!valid} onClick={() => onSave({ name, url })}><Check size={17} /> {initial?"Salvar alterações":"Adicionar link"}</button></div>
       </div>
     </div>
   );
@@ -1939,8 +1945,7 @@ function NewEntryModal({
   const [value, setValue] = useState(initial?String(initial.value):"");
   const [files, setFiles] = useState<Record<string, File>>({});
   const [date,setDate]=useState(initial?.date || new Date().toLocaleDateString("en-CA")),[taxId,setTaxId]=useState(initial?.taxId||""),[notes,setNotes]=useState(initial?.notes||"");
-  const isThirdParty = rubric.includes("Terceiros");
-  const requiredKeys = isThirdParty ? ["quote1", "quote2", "quote3", "invoice", "payment"] : ["invoice", "payment"];
+  const requiredKeys = ["quote1", "quote2", "quote3", "invoice", "payment"];
   const firstStepComplete = Boolean(supplier.trim() && description.trim() && rubric && date && Number(value) > 0);
 
   const setFile = (key: string, file?: File) => {
@@ -1959,7 +1964,7 @@ function NewEntryModal({
         <div className="modal-header"><div><span>{initial?"Editar lançamento":"Novo lançamento"}</span><h2 id="entry-modal-title">{step === 1 ? "Dados da despesa" : "Documentos comprobatórios"}</h2></div><button className="icon-button" onClick={onClose} aria-label="Fechar"><X size={19} /></button></div>
         <div className="stepper">
           <div className="active"><span>{step > 1 ? <Check size={14} /> : 1}</span><div><strong>Dados da despesa</strong><small>Identificação e valor</small></div></div>
-          <i /><div className={step === 2 ? "active" : ""}><span>2</span><div><strong>Documentos</strong><small>Envio opcional agora</small></div></div>
+          <i /><div className={step === 2 ? "active" : ""}><span>2</span><div><strong>Documentos</strong><small>Todos opcionais</small></div></div>
         </div>
         {step === 1 ? (
           <div className="modal-body form-grid">
@@ -1974,16 +1979,15 @@ function NewEntryModal({
           </div>
         ) : (
           <div className="modal-body">
-            <div className="document-pending-alert"><AlertCircle size={18}/><span>O envio de documentos é opcional neste momento. Você pode registrar a despesa agora e anexá-los depois. A pendência ficará destacada.</span></div>
-            {isThirdParty && <div className="document-requirement"><AlertCircle size={18} /><div><strong>Esta rubrica possui três cotações no checklist</strong><span>Anexe as propostas utilizadas na justificativa de seleção do fornecedor.</span></div></div>}
-            {isThirdParty && (
+            <div className="document-pending-alert"><AlertCircle size={18}/><span>Todos os documentos são opcionais. Você pode salvar sem anexos e acompanhar o checklist por rubrica em Lançamentos.</span></div>
+            {(
               <div className="upload-section">
-                <div className="upload-section-title"><span>Pesquisa de preços</span><b>Podem ser enviados depois</b></div>
-                <div className="upload-grid">{["quote1", "quote2", "quote3"].map((key, index) => <UploadBox key={key} label={"Cotação " + String(index + 1)} file={files[key]?.name} onFile={(file) => setFile(key, file)} />)}</div>
+                <div className="upload-section-title"><span>Pesquisa de preços</span><b>3 orçamentos · opcionais</b></div>
+                <div className="upload-grid">{["quote1", "quote2", "quote3"].map((key, index) => <UploadBox key={key} label={"Orçamento " + String(index + 1)} file={files[key]?.name} onFile={(file) => setFile(key, file)} />)}</div>
               </div>
             )}
             <div className="upload-section">
-              <div className="upload-section-title"><span>Comprovação da despesa</span><b>Envio opcional agora</b></div>
+              <div className="upload-section-title"><span>Comprovação da despesa</span><b>Envio opcional</b></div>
               <div className="upload-grid two"><UploadBox label="Nota fiscal / recibo" file={files.invoice?.name} onFile={(file) => setFile("invoice", file)} /><UploadBox label="Comprovante de pagamento" file={files.payment?.name} onFile={(file) => setFile("payment", file)} /></div>
             </div>
             <div className="document-tip"><ShieldCheck size={18} /><span>Formatos aceitos: PDF, JPG ou PNG · tamanho máximo de 10 MB por arquivo.</span></div>
@@ -2042,8 +2046,8 @@ function DeleteExpenseModal({expense,onClose,onConfirm}:{expense:Expense;onClose
 
 function ExpenseModal({expense,onClose,onUpload,onUpdate,admin,onEdit,onDelete}:{onEdit:(e:Expense)=>void;onDelete:(e:Expense)=>void;expense:Expense;onClose:()=>void;onUpload:(e:Expense,files:Record<string,File>)=>void;onUpdate:(e:Expense,action:string,reference?:string)=>void;admin:boolean}) {
  const [files,setFiles]=useState<Record<string,File>>({}),[reference,setReference]=useState("");
- const keys=expense.rubric.includes("Terceiros")?["invoice","payment","quote1","quote2","quote3"]:["invoice","payment"];
- const labels:Record<string,string>={invoice:"Nota fiscal / recibo",payment:"Comprovante de pagamento",quote1:"Cotação 1",quote2:"Cotação 2",quote3:"Cotação 3"};
+ const keys=["invoice","payment","quote1","quote2","quote3"];
+ const labels:Record<string,string>={invoice:"Nota fiscal / recibo",payment:"Comprovante de pagamento",quote1:"Orçamento 1",quote2:"Orçamento 2",quote3:"Orçamento 3"};
  const pending=Object.fromEntries(Object.entries(files).filter(([kind])=>!expense.documents?.some(d=>d.kind===kind)));
- return <div className="modal-backdrop"><section className="modal expense-modal" role="dialog" aria-modal="true" aria-label="Detalhes da despesa"><div className="modal-header"><div><span>{expense.date}</span><h2>{expense.supplier}</h2></div><button className="secondary-button" onClick={onClose}>Fechar</button></div><div className="expense-detail-hero"><strong>{money(expense.value)}</strong><StatusBadge status={expense.status}/></div><div className="modal-body"><p>{expense.description}</p><p>{expense.rubric} · {sourceOf(expense)}</p>{expense.notes&&<p>{expense.notes}</p>}<div className="expense-actions"><button className="secondary-button" onClick={()=>onEdit(expense)}><Pencil size={16}/> Editar lançamento</button><button className="delete-row-button" onClick={()=>onDelete(expense)}><Trash2 size={16}/> Excluir lançamento</button></div>{expense.docs<expense.requiredDocs&&<div className="document-pending-alert"><AlertCircle size={18}/><strong>Documentos pendentes: faltam {expense.requiredDocs-expense.docs} anexos.</strong></div>}<h3>Documentos comprobatórios</h3><div className="file-checklist">{keys.map(kind=>{const doc=expense.documents?.find(d=>d.kind===kind);return doc?<a className="complete file-document-download" key={kind} href={"/api/documents/"+doc.id}><FileCheck2 size={18}/><span><strong>{labels[kind]}</strong><small>{doc.name}</small></span><Download size={18}/></a>:<UploadBox key={kind} label={labels[kind]} file={files[kind]?.name} onFile={file=>{if(file)setFiles({...files,[kind]:file});}}/>;})}</div>{Object.keys(pending).length>0&&<button className="secondary-button" onClick={()=>onUpload(expense,pending)}>Salvar anexos selecionados</button>}{!expense.draft&&sourceOf(expense)==="Subvenção"&&admin&&expense.status!=="Conciliado"&&<label className="field"><span>Referência do extrato conferido</span><input value={reference} onChange={e=>setReference(e.target.value)} placeholder="Identificador bancário da transação"/></label>}</div><div className="modal-footer"><button className="secondary-button" onClick={onClose}>Fechar</button>{expense.draft?<button className="primary-button" onClick={()=>onUpdate(expense,"submit")}>Registrar despesa</button>:sourceOf(expense)==="Subvenção"&&admin&&expense.status!=="Conciliado"?<button className="primary-button" disabled={!reference.trim()||expense.docs<expense.requiredDocs} onClick={()=>onUpdate(expense,"reconcile",reference)}>Confirmar conferência do extrato</button>:null}</div></section></div>;
+ return <div className="modal-backdrop"><section className="modal expense-modal" role="dialog" aria-modal="true" aria-label="Detalhes da despesa"><div className="modal-header"><div><span>{expense.date}</span><h2>{expense.supplier}</h2></div><button className="secondary-button" onClick={onClose}>Fechar</button></div><div className="expense-detail-hero"><strong>{money(expense.value)}</strong><StatusBadge status={expense.status}/></div><div className="modal-body"><p>{expense.description}</p><p>{expense.rubric} · {sourceOf(expense)}</p>{expense.notes&&<p>{expense.notes}</p>}<div className="expense-actions"><button className="secondary-button" onClick={()=>onEdit(expense)}><Pencil size={16}/> Editar lançamento</button><button className="delete-row-button" onClick={()=>onDelete(expense)}><Trash2 size={16}/> Excluir lançamento</button></div>{expense.docs<expense.requiredDocs&&<div className="document-pending-alert"><AlertCircle size={18}/><strong>Documentos pendentes: faltam {expense.requiredDocs-expense.docs} anexos.</strong></div>}<h3>Documentos do lançamento</h3><p className="panel-note">Todos os anexos são opcionais. O checklist ajuda a acompanhar a documentação.</p><div className="file-checklist">{keys.map(kind=>{const doc=expense.documents?.find(d=>d.kind===kind);return doc?<a className="complete file-document-download" key={kind} href={"/api/documents/"+doc.id}><FileCheck2 size={18}/><span><strong>{labels[kind]}</strong><small>{doc.name}</small></span><Download size={18}/></a>:<UploadBox key={kind} label={labels[kind]} file={files[kind]?.name} onFile={file=>{if(file)setFiles({...files,[kind]:file});}}/>;})}</div>{Object.keys(pending).length>0&&<button className="secondary-button" onClick={()=>onUpload(expense,pending)}>Salvar anexos selecionados</button>}{!expense.draft&&sourceOf(expense)==="Subvenção"&&admin&&expense.status!=="Conciliado"&&<label className="field"><span>Referência do extrato conferido</span><input value={reference} onChange={e=>setReference(e.target.value)} placeholder="Identificador bancário da transação"/></label>}</div><div className="modal-footer"><button className="secondary-button" onClick={onClose}>Fechar</button>{expense.draft?<button className="primary-button" onClick={()=>onUpdate(expense,"submit")}>Registrar despesa</button>:sourceOf(expense)==="Subvenção"&&admin&&expense.status!=="Conciliado"?<button className="primary-button" disabled={!reference.trim()} onClick={()=>onUpdate(expense,"reconcile",reference)}>Confirmar conferência do extrato</button>:null}</div></section></div>;
 }
