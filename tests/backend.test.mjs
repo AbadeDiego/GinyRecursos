@@ -1,3 +1,4 @@
+import { schedulePeriod, scheduleStatus, schedulePeriodLabel, parseScheduleCsv, scheduleImportData } from '../lib/schedule.mjs';
 import {utils as excelUtils,write as writeExcel} from 'xlsx';
 import {spreadsheetCsv} from '../lib/spreadsheets.mjs';
 import {test} from 'node:test';
@@ -645,4 +646,72 @@ test('Despesas antigas permanecem editáveis sem liberar a mesma rubrica para no
  assert.equal((await f.call('expenses','POST',{...expense,projectId})).status,422);
  assert.equal((await f.call('expenses/'+old.id,'PATCH',{version:2,action:'reconcile',bankReference:'PIX'})).status,200);
  assert.equal((await f.call('state')).data.projects[0].executed,150);f.db.close();
+});
+
+test('Períodos resolvem mês único, vários meses, virada de ano e legado sem término',()=>{
+ const start='2026-09-01';
+ assert.deepEqual(schedulePeriod({month:'Setembro'},start),{month:'Setembro',year:2026,endMonth:'Setembro',endYear:2026,duration:1});
+ assert.equal(schedulePeriod({month:'Janeiro'},start).year,2027);
+ const range={month:'Novembro',year:2026,endMonth:'Fevereiro'};
+ assert.equal(schedulePeriod(range,start).endYear,2027);assert.equal(schedulePeriod(range,start).duration,4);
+ assert.equal(schedulePeriodLabel(range,start),'Nov/2026–Fev/2027');
+ assert.equal(schedulePeriodLabel({month:'Setembro',year:2026,endMonth:'Novembro'},start),'Set–Nov/2026');
+ for(const item of [{month:'Inválido'},{month:'Janeiro',endMonth:'Inválido'},{month:'Janeiro',year:1999},{month:'Novembro',year:2026,endMonth:'Janeiro',endYear:2026},{month:'Dezembro',year:2200,endMonth:'Janeiro'}])assert.throws(()=>schedulePeriod(item,start));
+});
+test('Atraso considera o último mês em Brasília, preserva concluídas e status manual',()=>{
+ const item={month:'Agosto',year:2026,endMonth:'Setembro',endYear:2026,status:'Em andamento'},start='2026-01-01';
+ assert.equal(scheduleStatus(item,start,new Date('2026-10-01T02:59:59Z')),'Em andamento');
+ assert.equal(scheduleStatus(item,start,new Date('2026-10-01T03:00:00Z')),'Atrasada');
+ assert.equal(scheduleStatus({...item,status:'Concluída'},start,new Date('2027-01-01')),'Concluída');
+ assert.equal(scheduleStatus({...item,status:'Atrasada'},start,new Date('2026-01-01')),'Atrasada');
+ assert.equal(scheduleStatus({month:'Setembro',status:'Não iniciada'},start,new Date('2026-10-05')),'Atrasada');
+ assert.equal(scheduleStatus({...item,endMonth:'Novembro'},start,new Date('2026-10-05')),'Em andamento');
+ assert.equal(scheduleStatus({month:'Setembro',status:'Não iniciada'},undefined,new Date('2026-10-05')),'Não iniciada');
+});
+test('Prévia CSV aceita formatos novos e antigos, calcula parcelas e aponta períodos inválidos',()=>{
+ const start='2026-09-01';
+ const old=parseScheduleCsv('Item;Atividade;Valor;Mês;Ano;Meses\nPró-labore;Coordenação;500;Novembro;2026;4',start);assert.deepEqual(old.rows[0].issues,[]);assert.equal(old.rows[0].endMonth,'Fevereiro');assert.equal(old.rows[0].endYear,2027);assert.equal(old.rows[0].monthsCount,4);
+ const newCsv='Rubrica;Fonte;Atividade;Valor;Mês inicial;Mês final;Ano inicial;Ano final\nConsultoria;Subvenção;Pesquisa;1.200,50;Setembro;Novembro;2026;2026\nMaterial de Consumo;Contrapartida;Insumos;100;Outubro;;;';
+ const result=parseScheduleCsv(newCsv,start);assert.equal(result.error,'');assert.ok(result.rows.every(r=>!r.issues.length));assert.equal(result.rows[0].valor,1200.50);assert.equal(result.rows[0].monthsCount,undefined);assert.equal(result.rows[1].endMonth,'Outubro');
+ const invalid=parseScheduleCsv(newCsv+'\nConsultoria;Subvenção;Prazo invertido;10;Dezembro;Janeiro;2026;2026',start);assert.match(invalid.rows[2].issues.join(' '),/anterior/);
+ assert.match(parseScheduleCsv('Rubrica;Atividade;Valor\nConsultoria;Pesquisa;100',start).error,/mês inicial/);
+ const mismatch=parseScheduleCsv('Rubrica;Atividade;Valor;Mês inicial;Mês final;Ano;Meses\nPró-labore;Gestão;100;Janeiro;Março;2026;2',start);assert.match(mismatch.rows[0].issues.join(' '),/mesma quantidade/);
+});
+for(const extension of ['xls','xlsx'])test(`Períodos ${extension}: prévia real, importação, edição, relatório e total sem multiplicação`,async()=>{
+ const f=await fixture(),projectId=f.projectId;
+ const bytes=excelFixture(extension,[['Rubrica','Fonte','Atividade','Valor','Mês inicial','Mês final','Ano inicial','Ano final'],['Consultoria','Subvenção','Atividade longa',1200,'Setembro','Novembro',2026,2026],['Material de Consumo','Contrapartida','Compra pontual',200,'Outubro','Outubro',2026,2026]]);
+ const parsed=parseScheduleCsv(spreadsheetCsv(bytes,'periodos.'+extension).csv,f.project.startDate);assert.ok(parsed.rows.every(r=>!r.issues.length));
+ const result=await f.call('schedule/import','POST',{projectId,rows:parsed.rows.map(scheduleImportData)});assert.equal(result.status,201);assert.equal(result.data.length,2);assert.equal(result.data[0].endMonth,'Novembro');
+ assert.equal(result.data.reduce((sum,r)=>sum+r.value,0),1400);
+ const edited=await f.call('schedule/'+result.data[0].id,'PATCH',{...result.data[0],endMonth:'Janeiro',endYear:2027});assert.equal(edited.status,200);assert.equal(edited.data.value,1200);
+ const invalid=await f.call('schedule/'+edited.data.id,'PATCH',{...edited.data,endYear:2025});assert.equal(invalid.status,422);assert.equal((await f.call('state')).data.schedule[0].version,2);
+ const html=(await f.call('reports/'+projectId+'?format=html')).data;assert.match(html,/Setembro\/2026–Janeiro\/2027/);
+ const report=(await f.call('reports/'+projectId+'?format=json')).data;assert.equal(report.schedule[0].endYear,2027);
+ const rollback=await f.call('schedule/import','POST',{projectId,rows:[{...schedule,value:1},{...schedule,value:1,year:2026,endMonth:'Janeiro',endYear:2025}]});assert.equal(rollback.status,422);assert.equal((await f.call('state')).data.schedule.length,2);f.db.close();
+});
+test('Período de pró-labore gera parcelas mensais e preserva o modelo antigo',async()=>{
+ const f=await fixture(),projectId=f.projectId;
+ const data={...schedule,rubric:'Pessoal / Pró-labore',projectId,month:'Novembro',year:2026,endMonth:'Fevereiro',endYear:2027,value:200};
+ const created=await f.call('schedule','POST',data);assert.equal(created.status,201);assert.equal(created.data.length,4);assert.deepEqual(created.data.map(x=>x.month),['Novembro','Dezembro','Janeiro','Fevereiro']);assert.ok(created.data.every(x=>x.month===x.endMonth&&x.year===x.endYear));assert.equal(created.data.reduce((s,x)=>s+x.value,0),800);
+ assert.equal((await f.call('schedule','POST',{...data,monthsCount:3})).status,422);
+ const first=created.data[0];assert.equal((await f.call('schedule/'+first.id,'PATCH',{...first,endMonth:'Dezembro'})).status,422);
+ const old=await f.call('schedule','POST',{...schedule,rubric:'Pessoal / Pró-labore',projectId,month:'Novembro',year:2026,monthsCount:2,value:100});assert.equal(old.status,201);assert.equal(old.data[1].endMonth,'Dezembro');
+ f.db.close();
+});
+test('Registros legados sem mês final recebem período na edição sem perda de valor',async()=>{
+ const f=await fixture(),projectId=f.projectId;
+ const created=(await f.call('schedule','POST',{...schedule,projectId,value:100})).data;
+ const {endMonth,endYear,...old}=created;f.db.prepare('UPDATE schedule SET data=? WHERE id=?').run(JSON.stringify(old),old.id);
+ const edited=await f.call('schedule/'+old.id,'PATCH',{...old,activity:'Descrição revisada'});assert.equal(edited.status,200);assert.equal(edited.data.endMonth,old.month);assert.equal(edited.data.endYear,old.year);assert.equal(edited.data.value,100);f.db.close();
+});
+test('Remanejamento mantém duração do destino ao deslocar o mês inicial',async()=>{
+ const f=await fixture(),projectId=f.projectId;
+ const origin=(await f.call('schedule','POST',{...schedule,projectId,rubric:'Consultoria',value:500,year:2026})).data;
+ const remap=(await f.call('remaps','POST',{projectId,sourceScheduleId:origin.id,to:'Bolsa',activity:'Pesquisa',month:'Novembro',year:2026,value:100,reason:'Planejamento'})).data;
+ const destination=(await f.call('state')).data.schedule.find(s=>s.id===remap.destinationScheduleId);
+ assert.equal((await f.call('schedule/'+destination.id,'PATCH',{...destination,endMonth:'Janeiro',endYear:2027})).status,200);
+ assert.equal((await f.call('remaps/'+remap.id,'PATCH',{...remap,month:'Dezembro'})).status,200);
+ const shifted=(await f.call('state')).data.schedule.find(s=>s.id===destination.id);assert.equal(shifted.month,'Dezembro');assert.equal(shifted.endMonth,'Fevereiro');assert.equal(shifted.endYear,2027);
+ const remapped=await f.call('remaps/'+remap.id,'PATCH',{...remap,version:2,month:'Dezembro',value:120});assert.equal(remapped.status,200);
+ const replaced=(await f.call('state')).data.schedule.find(s=>s.id===remapped.data.destinationScheduleId);assert.equal(replaced.endMonth,'Fevereiro');assert.equal(replaced.endYear,2027);assert.equal(replaced.value,120);f.db.close();
 });

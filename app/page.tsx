@@ -1,5 +1,7 @@
 "use client";
 
+import { parseScheduleCsv, scheduleImportData, schedulePeriodLabel, scheduleStatus } from "../lib/schedule.mjs";
+
 import { sourceOf, resourceSource } from "../lib/funding.mjs";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -182,6 +184,8 @@ type ScheduleItem = {
   source?: FundingSource;
   sourceInferred?: boolean;
   year?: number | null;
+  endMonth?: string;
+  endYear?: number | null;
   recurrenceId?: string;
   installment?: number;
   installments?: number;
@@ -203,6 +207,8 @@ type CsvScheduleRow = {
   source?: FundingSource;
   item: string;
   year?: number;
+  endMonth?: string;
+  endYear?: number;
   monthsCount?: number;
   atividade: string;
   valor: number;
@@ -444,7 +450,7 @@ function Workspace({initial,onLogout}: {initial: State;onLogout:()=>void}) {
   const openCsvImport=()=>{setNewEntryOpen(false);setCsvImportOpen(true);};
   const finishCsvImport=(rows:CsvBudgetRow[])=>commit(()=>api("budget/import","POST",{projectId:activeProject.id,rows}),()=>{setCsvImportOpen(false);setView("overview");},"Orçamento importado e salvo.");
   const finishTeamImport=(rows:CsvTeamRow[])=>commit(()=>api("team/import","POST",{projectId:activeProject.id,rows:rows.map(r=>({name:r.nome,role:r.funcao,activity:r.atividade}))}),()=>setTeamImportOpen(false),"Membros adicionados à equipe.");
-  const finishScheduleImport=(rows:CsvScheduleRow[])=>commit(()=>api("schedule/import","POST",{projectId:activeProject.id,rows:rows.map(r=>({source:r.source,rubric:r.item,activity:r.atividade,value:r.valor,month:r.mes,year:r.year,monthsCount:r.monthsCount}))}),()=>setScheduleImportOpen(false),"Cronograma importado.");
+  const finishScheduleImport=(rows:CsvScheduleRow[])=>commit(()=>api("schedule/import","POST",{projectId:activeProject.id,rows:rows.map(scheduleImportData)}),()=>setScheduleImportOpen(false),"Cronograma importado.");
   const saveTeamMember=(updated:TeamMember)=>commit(()=>api("team/"+updated.id,"PATCH",updated),()=>setEditingTeamMember(null),"Membro atualizado.");
   const createTeamMember=(draft:Pick<TeamMember,"name"|"role"|"activity">)=>commit(()=>api("team","POST",{...draft,projectId:activeProject.id}),()=>setTeamMemberCreateOpen(false),"Membro adicionado.");
   const deleteTeamMember=(member:TeamMember)=>commit(()=>api("team/"+member.id,"DELETE",{version:member.version}),()=>setTeamMemberToDelete(null),"Membro excluído.");
@@ -1206,19 +1212,22 @@ function ScheduleView({
   onEdit: (item: ScheduleItem) => void;
 }) {
   const [statusFilter, setStatusFilter] = useState<"Todas" | ScheduleStatus>("Todas");
+  const [now,setNow]=useState(()=>new Date());
+  useEffect(()=>{const timer=window.setInterval(()=>setNow(new Date()),60000);return ()=>window.clearInterval(timer);},[]);
+  const statusOf=(item:ScheduleItem)=>scheduleStatus(item,project.startDate,now) as ScheduleStatus;
   const total = items.reduce((sum, item) => sum + item.value, 0);
   const statusCounts: Record<ScheduleStatus, number> = {
-    "Não iniciada": items.filter((item) => item.status === "Não iniciada").length,
-    "Em andamento": items.filter((item) => item.status === "Em andamento").length,
-    "Concluída": items.filter((item) => item.status === "Concluída").length,
-    "Atrasada": items.filter((item) => item.status === "Atrasada").length,
+    "Não iniciada": items.filter((item) => statusOf(item) === "Não iniciada").length,
+    "Em andamento": items.filter((item) => statusOf(item) === "Em andamento").length,
+    "Concluída": items.filter((item) => statusOf(item) === "Concluída").length,
+    "Atrasada": items.filter((item) => statusOf(item) === "Atrasada").length,
   };
   const tasksToDo = items.length - statusCounts["Concluída"];
   const completion = percent(statusCounts["Concluída"], items.length);
   const statusPriority: Record<ScheduleStatus, number> = { "Atrasada": 0, "Em andamento": 1, "Não iniciada": 2, "Concluída": 3 };
   const visibleItems = [...items]
-    .filter((item) => statusFilter === "Todas" || item.status === statusFilter)
-    .sort((left, right) => statusPriority[left.status] - statusPriority[right.status] || ((left.year||0)*12+projectMonths.indexOf(left.month)) - ((right.year||0)*12+projectMonths.indexOf(right.month)));
+    .filter((item) => statusFilter === "Todas" || statusOf(item) === statusFilter)
+    .sort((left, right) => statusPriority[statusOf(left)] - statusPriority[statusOf(right)] || ((left.year||0)*12+projectMonths.indexOf(left.month)) - ((right.year||0)*12+projectMonths.indexOf(right.month)));
   const filterOptions: Array<"Todas" | ScheduleStatus> = ["Todas", "Atrasada", "Em andamento", "Não iniciada", "Concluída"];
 
   return (
@@ -1238,7 +1247,7 @@ function ScheduleView({
         {items.length > 0 ? (
           <>
             <div className="schedule-smart-toolbar">
-              <div className="schedule-priority-note"><Gauge size={16} /><span><strong>Ordem inteligente</strong>Atrasadas e em andamento aparecem primeiro.</span></div>
+              <div className="schedule-priority-note"><Gauge size={16} /><span><strong>Ordem inteligente</strong>Atraso após o mês final. Concluídas não entram em atraso.</span></div>
               <div className="schedule-status-filters" aria-label="Filtrar cronograma por status">
                 {filterOptions.map((filter) => {
                   const count = filter === "Todas" ? items.length : statusCounts[filter];
@@ -1248,15 +1257,15 @@ function ScheduleView({
             </div>
             <div className="table-wrap">
               <table className="data-table management-table schedule-table">
-                <thead><tr><th>Rubrica</th><th>Fonte</th><th>Atividade</th><th>Valor</th><th>Mês</th><th>Status</th><th aria-label="Ações" /></tr></thead>
+                <thead><tr><th>Rubrica</th><th>Fonte</th><th>Atividade</th><th>Valor</th><th>Período</th><th>Status</th><th aria-label="Ações" /></tr></thead>
                 <tbody>
                   {visibleItems.map((item) => (
-                    <tr key={item.id} className={`schedule-row status-${normalizeCsvText(item.status).replace(/\s+/g, "-")}`}>
+                    <tr key={item.id} className={`schedule-row status-${normalizeCsvText(statusOf(item)).replace(/\s+/g, "-")}`}>
                       <td><strong className="schedule-item-title">{item.rubric||item.item}</strong>{item.recurrenceId&&<span>Mensal · parcela {item.installment}/{item.installments}</span>}</td>
-                      <td><span className="category-pill">{sourceOf(item)}</span>{item.sourceInferred&&<small>Conferir fonte</small>}</td><td><p className="management-activity schedule-activity">{item.activity}</p></td>
+                      <td><span className="category-pill">{sourceOf(item)}</span>{item.sourceInferred&&<small>Conferir fonte</small>}</td><td><ScheduleActivity activity={item.activity}/></td>
                       <td><strong className="schedule-value">{money(item.value)}</strong></td>
-                      <td><span className="schedule-month"><CalendarDays size={14} /> {item.month}{item.year?` / ${item.year}`:""}</span></td>
-                      <td><ScheduleStatusBadge status={item.status} /></td>
+                      <td><span className="schedule-month" title={schedulePeriodLabel(item,project.startDate,false)}><CalendarDays size={14} /> {schedulePeriodLabel(item,project.startDate)}</span></td>
+                      <td><ScheduleStatusBadge status={statusOf(item)} /></td>
                       <td><button className="secondary-button small edit-row-button" onClick={() => onEdit(item)}><Pencil size={14} /> Editar</button></td>
                     </tr>
                   ))}
@@ -1267,11 +1276,15 @@ function ScheduleView({
             </div>
           </>
         ) : (
-          <div className="empty-state management-empty"><CalendarDays size={31} /><strong>Nenhum item no cronograma</strong><p>Adicione uma previsão ou importe um CSV com rubrica, atividade, valor e mês.</p><button className="primary-button small" onClick={onAdd}><Plus size={15} /> Adicionar previsão</button></div>
+          <div className="empty-state management-empty"><CalendarDays size={31} /><strong>Nenhum item no cronograma</strong><p>Adicione uma previsão ou importe uma planilha com rubrica, atividade, valor e período.</p><button className="primary-button small" onClick={onAdd}><Plus size={15} /> Adicionar previsão</button></div>
         )}
       </section>
     </>
   );
+}
+
+function ScheduleActivity({activity}:{activity:string}) {
+  return <div className="schedule-activity-copy"><p className="management-activity schedule-activity">{activity.length>180?activity.slice(0,177)+"…":activity}</p>{activity.length>180&&<details><summary>Ver descrição completa</summary><p>{activity}</p></details>}</div>;
 }
 
 function ScheduleStatusBadge({ status }: { status: ScheduleStatus }) {
@@ -1354,12 +1367,13 @@ function parseBudgetCsv(text: string): { rows: CsvBudgetRow[]; error: string } {
 }
 
 function parseProjectCsv(text: string, kind: "team"): { rows: CsvTeamRow[]; error: string };
-function parseProjectCsv(text: string, kind: "schedule"): { rows: CsvScheduleRow[]; error: string };
-function parseProjectCsv(text: string, kind: "team" | "schedule") {
+function parseProjectCsv(text: string, kind: "schedule", projectStart: string): { rows: CsvScheduleRow[]; error: string };
+function parseProjectCsv(text: string, kind: "team" | "schedule", projectStart?: string) {
+  if(kind==="schedule")return parseScheduleCsv(text,projectStart) as {rows:CsvScheduleRow[];error:string};
   const lines: string[][] = csvRecords(text);
   if (lines.length < 2) return { rows: [], error: "O arquivo precisa ter um cabeçalho e pelo menos uma linha de dados." };
 
-  const headers = lines[0].map(normalizeCsvHeader).map(h=>kind==="schedule"&&h==="item"?"rubrica":h);
+  const headers = lines[0].map(normalizeCsvHeader);
   const required = kind === "team"
     ? [{ key: "nome", label: "nome" }, { key: "funcao", label: "função" }, { key: "atividade", label: "atividade" }]
     : [{ key: "rubrica", label: "rubrica" }, { key: "atividade", label: "atividade" }, { key: "valor", label: "valor" }, { key: "mes", label: "mês" }];
@@ -1384,46 +1398,13 @@ function parseProjectCsv(text: string, kind: "team" | "schedule") {
     return { rows, error: "" };
   }
 
-  const rows: CsvScheduleRow[] = lines.slice(1).map((line) => {
-    const cells = line;
-    const rawMonth = cells[indexOf("mes")] || "";
-    const recognizedMonth = projectMonths.find((month) => normalizeCsvText(month) === normalizeCsvText(rawMonth));
-    const row: CsvScheduleRow = {
-      item: cells[indexOf("rubrica")] || "",
-      source: (headers.includes("fonte") ? ({subvencao:"Subvenção",contrapartida:"Contrapartida"} as Record<string,string>)[normalizeCsvText(cells[indexOf("fonte")]||"")] : undefined) as FundingSource | undefined,
-      year:headers.includes("ano")&&cells[indexOf("ano")]?Number(cells[indexOf("ano")]):undefined,
-      monthsCount:headers.includes("meses")&&cells[indexOf("meses")]?Number(cells[indexOf("meses")]):1,
-      atividade: cells[indexOf("atividade")] || "",
-      valor: parseBrazilianNumber(cells[indexOf("valor")] || ""),
-      mes: recognizedMonth || rawMonth,
-      issues: [],
-    };
-    if(["pro-labore","pro labore","prolabore"].includes(normalizeCsvText(row.item)))row.item="Pessoal / Pró-labore";
-    if(headers.includes("fonte")&&!row.source)row.issues.push("Fonte deve ser Subvenção ou Contrapartida");
-    if(!headers.includes("fonte"))row.source=row.item==="Contrapartida"?"Contrapartida":"Subvenção";
-    if (!row.item) row.issues.push("Rubrica não informada");
-    if(row.year!==undefined&&(!Number.isInteger(row.year)||row.year<2000||row.year>2200))row.issues.push("Ano inválido");
-    if(!Number.isInteger(row.monthsCount)||row.monthsCount!<1||row.monthsCount!>60)row.issues.push("Quantidade de meses inválida");
-    if(row.monthsCount!>1&&normalizeCsvText(row.item)!==normalizeCsvText("Pessoal / Pró-labore"))row.issues.push("Use meses apenas para Pessoal / Pró-labore");
-    if (!row.atividade) row.issues.push("Atividade não informada");
-    if (!Number.isFinite(row.valor) || row.valor <= 0) row.issues.push("Valor inválido");
-    if (!row.mes) row.issues.push("Mês não informado");
-    else if (!recognizedMonth) row.issues.push("Informe um mês de janeiro a dezembro");
-    return row;
-  });
-  return { rows, error: "" };
+  return {rows:[] as CsvTeamRow[],error:""};
 }
 
 const sampleTeamRows: CsvTeamRow[] = [
   { nome: "Marina Alves", funcao: "Coordenadora do projeto", atividade: "Gestão técnica, acompanhamento das metas e articulação com a financiadora.", issues: [] },
   { nome: "Rafael Moura", funcao: "Pesquisador de materiais", atividade: "Formulação, testes laboratoriais e validação dos protótipos.", issues: [] },
   { nome: "Camila Nunes", funcao: "Analista financeira", atividade: "Controle das rubricas, documentos fiscais e prestação de contas.", issues: [] },
-];
-
-const sampleScheduleRows: CsvScheduleRow[] = [
-  { item: "Consultoria", atividade: "Levantar os requisitos, definir as especificações técnicas e consolidar o plano de execução do projeto.", valor: 42000, mes: "Janeiro", issues: [] },
-  { item: "Material de Consumo", atividade: "Selecionar fornecedores, realizar as compras previstas e organizar os materiais necessários para os testes.", valor: 86500, mes: "Fevereiro", issues: [] },
-  { item: "Serviços de Terceiros - PJ", atividade: "Projetar, programar e testar os módulos da plataforma previstos no escopo aprovado.", valor: 148000, mes: "Março", issues: [] },
 ];
 
 const sampleCsvRows: CsvBudgetRow[] = [
@@ -1496,7 +1477,7 @@ function OperationalCsvImportModal({
         const {spreadsheetCsv}=await import("../lib/spreadsheets.mjs");
         const result=spreadsheetCsv(new Uint8Array(await file.arrayBuffer()),file.name);text=result.csv;tab=result.sheetName;
       } else text=await file.text();
-      const parsed = isTeam?parseProjectCsv(text,"team"):parseProjectCsv(text,"schedule");
+      const parsed = isTeam?parseProjectCsv(text,"team"):parseProjectCsv(text,"schedule",project.startDate||"");
       if(sequence!==readSequence.current)return;
       setRows(parsed.rows);setSheetName(tab);setError(parsed.error);
     } catch(error) {
@@ -1507,7 +1488,7 @@ function OperationalCsvImportModal({
 
   const useExample = () => {
     ++readSequence.current;setReading(false);setSheetName("");
-    setRows(isTeam ? sampleTeamRows : sampleScheduleRows);
+    setRows(isTeam ? sampleTeamRows : parseScheduleCsv("Rubrica;Atividade;Valor;Mês inicial;Mês final\nConsultoria;Planejamento técnico;2000;Janeiro;Março\nMaterial de Consumo;Compra de insumos;1500;Fevereiro;Fevereiro",project.startDate).rows as CsvScheduleRow[]);
     setFileName(isTeam ? "modelo_equipe_tecnica.csv" : "modelo_cronograma.csv");
     setError("");
   };
@@ -1520,9 +1501,10 @@ function OperationalCsvImportModal({
           "Rafael Moura;Pesquisador;Execução dos testes e validação dos resultados",
         ].join("\n")
       : [
-          "rubrica;fonte;atividade;valor;mês;ano;meses",
-          "Consultoria;Subvenção;Levantar os requisitos e consolidar as especificações técnicas;2.000,00;Janeiro;2026;1",
-          "Pessoal / Pró-labore;Contrapartida;Coordenação mensal do projeto;1.500,00;Março;2026;6",
+          "Rubrica;Fonte;Atividade;Valor;Mês inicial;Mês final;Ano inicial;Ano final",
+          `Consultoria;Subvenção;Levantar requisitos e consolidar especificações;2.000,00;Janeiro;Março;${project.startDate?.slice(0,4)||new Date().getFullYear()};${project.startDate?.slice(0,4)||new Date().getFullYear()}`,
+          `Material de Consumo;Subvenção;Compra de insumos;1.000,00;Fevereiro;Fevereiro;${project.startDate?.slice(0,4)||new Date().getFullYear()};${project.startDate?.slice(0,4)||new Date().getFullYear()}`,
+          `Pessoal / Pró-labore;Contrapartida;Coordenação mensal;1.500,00;Março;Agosto;${project.startDate?.slice(0,4)||new Date().getFullYear()};${project.startDate?.slice(0,4)||new Date().getFullYear()}`,
         ].join("\n");
     const url = URL.createObjectURL(new Blob(["\uFEFF" + content], { type: "text/csv;charset=utf-8" }));
     const anchor = document.createElement("a");
@@ -1537,7 +1519,7 @@ function OperationalCsvImportModal({
   const scheduleRows = rows as CsvScheduleRow[];
   const roleCount = isTeam ? new Set(teamRows.map((row) => normalizeCsvText(row.funcao))).size : 0;
   const scheduleTotal = !isTeam ? scheduleRows.reduce((sum, row) => sum + (Number.isFinite(row.valor) ? row.valor * (row.monthsCount || 1) : 0), 0) : 0;
-  const columns = isTeam ? ["nome", "função", "atividade"] : ["rubrica", "fonte", "atividade (descrição completa)", "valor", "mês"];
+  const columns = isTeam ? ["nome", "função", "atividade"] : ["rubrica", "atividade", "valor", "mês inicial (ou mês)"];
 
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
@@ -1552,7 +1534,7 @@ function OperationalCsvImportModal({
           <div className="modal-body csv-modal-body">
             <div className="csv-intro">
               <div className="csv-intro-icon">{isTeam ? <Users size={24} /> : <CalendarDays size={24} />}</div>
-              <div><strong>{isTeam ? "Cadastre toda a equipe de uma só vez" : "Preencha o planejamento em poucos passos"}</strong><p>{isTeam ? "O sistema valida as colunas e mostra uma prévia antes de preencher a equipe do projeto." : "Excel: coloque os dados na primeira aba e converta fórmulas em valores. Use rubrica, fonte (Subvenção ou Contrapartida), atividade, valor e mês por extenso. Arquivos anteriores sem fonte assumem Subvenção, exceto a rubrica Contrapartida. As colunas opcionais ano e meses definem o início e a quantidade de parcelas do pró-labore. Valor é o valor de cada mês; sem meses, uma linha representa uma única previsão."}</p></div>
+              <div><strong>{isTeam ? "Cadastre toda a equipe de uma só vez" : "Preencha o planejamento em poucos passos"}</strong><p>{isTeam ? "O sistema valida as colunas e mostra uma prévia antes de preencher a equipe do projeto." : "Use mês inicial e mês final por extenso. Atividades no mesmo mês usam o mesmo início e fim. No Excel, os dados devem estar na primeira aba, com fórmulas convertidas em valores."}</p></div>
             </div>
             <button
               className={`csv-dropzone ${dragActive ? "dragging" : ""}`}
@@ -1570,6 +1552,7 @@ function OperationalCsvImportModal({
               <div className="csv-schema-title"><span>Colunas obrigatórias</span><b>A ordem pode variar</b></div>
               <div>{columns.map((column, index) => <span key={column}><b>{index + 1}</b> {column}</span>)}</div>
             </div>
+            {!isTeam&&<details className="csv-period-help"><summary>Períodos, valores e compatibilidade</summary><p><strong>Mês final</strong> é opcional: em branco, usa o mês inicial. Use <strong>ano inicial</strong> e <strong>ano final</strong> para indicar os anos. Sem ano, o início é inferido da vigência; se o mês final anteceder o inicial, o término será no ano seguinte.</p><p><strong>Valor</strong> é o total da atividade. Para <strong>Pessoal / Pró-labore</strong>, é o valor mensal: cada mês do período gera uma parcela.</p><p>Planilhas anteriores com <strong>mês</strong>, <strong>ano</strong> e <strong>meses</strong> continuam aceitas. Meses define apenas as parcelas do pró-labore. Informe a <strong>fonte</strong>: Subvenção ou Contrapartida. Sem fonte, assume Subvenção, exceto a rubrica Contrapartida.</p></details>}
             <button className="csv-example-button" onClick={useExample}>{isTeam ? <Users size={17} /> : <CalendarDays size={17} />}<span><strong>Ver com dados de exemplo</strong><small>Carrega uma prévia pronta para testar a importação</small></span><ArrowRight size={16} /></button>
           </div>
         ) : (
@@ -1592,8 +1575,8 @@ function OperationalCsvImportModal({
                 </table>
               ) : (
                 <table className="csv-preview-table operational-preview-table">
-                  <thead><tr><th>#</th><th>Rubrica</th><th>Fonte</th><th>Atividade</th><th>Valor</th><th>Mês</th><th /></tr></thead>
-                  <tbody>{scheduleRows.map((row, index) => <tr key={`${row.item}-${index}`} className={row.issues.length ? "has-issue" : ""}><td>{index + 1}</td><td><strong>{row.item || "—"}</strong></td><td>{row.source||sourceOf({rubric:row.item})}</td><td><span className="csv-description">{row.atividade || "—"}</span></td><td><strong>{Number.isFinite(row.valor) ? money(row.valor) : "—"}</strong></td><td>{row.mes || "—"}{row.year?` / ${row.year}`:""}{(row.monthsCount||1)>1&&<small>{row.monthsCount} parcelas mensais</small>}</td><td>{row.issues.length ? <span className="csv-row-issue" title={row.issues.join(", ")}><AlertCircle size={15} /></span> : <CheckCircle2 className="csv-row-valid" size={15} />}</td></tr>)}</tbody>
+                  <thead><tr><th>#</th><th>Rubrica</th><th>Fonte</th><th>Atividade</th><th>Valor</th><th>Período</th><th /></tr></thead>
+                  <tbody>{scheduleRows.map((row, index) => <tr key={`${row.item}-${index}`} className={row.issues.length ? "has-issue" : ""}><td>{index + 1}</td><td><strong>{row.item || "—"}</strong></td><td>{row.source||sourceOf({rubric:row.item})}</td><td><span className="csv-description">{row.atividade || "—"}</span></td><td><strong>{Number.isFinite(row.valor) ? money(row.valor) : "—"}</strong></td><td>{schedulePeriodLabel(scheduleImportData(row),project.startDate)}{(row.monthsCount||1)>1&&<small>{row.monthsCount} parcelas mensais</small>}</td><td>{row.issues.length ? <span className="csv-row-issue" title={row.issues.join(", ")}><AlertCircle size={15} /></span> : <CheckCircle2 className="csv-row-valid" size={15} />}</td></tr>)}</tbody>
                 </table>
               )}
             </div>
@@ -1703,21 +1686,27 @@ function ScheduleItemEditModal({item,project,rubrics,onAddRubric,onClose,onSave,
   const [source,setSource]=useState<FundingSource>(item?sourceOf(item):"Subvenção");
   const [activity,setActivity]=useState(item?.activity || ""),[value,setValue]=useState(item?String(item.value):"");
   const [month,setMonth]=useState(item?.month || projectMonths[start.getMonth()]),[year,setYear]=useState(item?.year || start.getFullYear());
-  const [count,setCount]=useState(1),[status,setStatus]=useState<ScheduleStatus>(item?.status || "Não iniciada");
+  const [endMonth,setEndMonth]=useState(item?.endMonth || item?.month || projectMonths[start.getMonth()]),[endYear,setEndYear]=useState(item?.endYear || item?.year || start.getFullYear());
+  const [status,setStatus]=useState<ScheduleStatus>(item?.status || "Não iniciada");
+  const count=item?.recurrenceId?1:(endYear-year)*12+projectMonths.indexOf(endMonth)-projectMonths.indexOf(month)+1;
   const monthly=rubric==="Pessoal / Pró-labore"&&!item;
-  return <div className="modal-backdrop"><form className="modal edit-management-modal" role="dialog" aria-modal="true" aria-label={item?"Editar previsão":"Adicionar previsão"} onSubmit={e=>{e.preventDefault();onSave({...item,id:item?.id||"",version:item?.version||1,projectId:project.id,item:rubric,rubric,source,activity:activity.trim(),value:Number(value),month,year,status,monthsCount:monthly?count:1});}}>
+  return <div className="modal-backdrop"><form className="modal edit-management-modal" role="dialog" aria-modal="true" aria-label={item?"Editar previsão":"Adicionar previsão"} onSubmit={e=>{e.preventDefault();onSave({...item,id:item?.id||"",version:item?.version||1,projectId:project.id,item:rubric,rubric,source,activity:activity.trim(),value:Number(value),month,year,endMonth:item?.recurrenceId?month:endMonth,endYear:item?.recurrenceId?year:endYear,status,monthsCount:monthly?count:1});}}>
     <div className="modal-header"><div><span>Cronograma do projeto</span><h2>{item?"Editar previsão":"Adicionar previsão"}</h2></div><button type="button" className="icon-button" onClick={onClose} aria-label="Fechar"><X size={19}/></button></div>
     <div className="modal-body form-grid management-edit-form">
       <div className="field full"><span>Rubrica</span><RubricPicker value={rubric} onChange={setRubric} rubrics={rubrics} onAdd={onAddRubric}/></div>
       <SourceField value={source} onChange={setSource}/>{item?.sourceInferred&&<p className="full monthly-note">Confira a fonte deste registro anterior antes de salvar.</p>}
       <label className="field full"><span>Descrição completa da atividade</span><textarea required rows={3} value={activity} onChange={e=>setActivity(e.target.value)}/></label>
-      <label className="field"><span>{monthly?"Mês inicial":"Mês"}</span><select value={month} onChange={e=>setMonth(e.target.value)}>{projectMonths.map(m=><option key={m}>{m}</option>)}</select></label>
-      <label className="field"><span>Ano</span><input required type="number" min="2000" max="2200" value={year} onChange={e=>setYear(Number(e.target.value))}/></label>
+      <label className="field"><span>Mês inicial</span><select value={month} onChange={e=>{if(endMonth===month&&endYear===year)setEndMonth(e.target.value);setMonth(e.target.value);}}>{projectMonths.map(m=><option key={m}>{m}</option>)}</select></label>
+      <label className="field"><span>Ano inicial</span><input required type="number" min="2000" max="2200" value={year} onChange={e=>{if(endYear===year)setEndYear(Number(e.target.value));setYear(Number(e.target.value));}}/></label>
+      {!item?.recurrenceId&&<><label className="field"><span>Mês final</span><select value={endMonth} onChange={e=>setEndMonth(e.target.value)}>{projectMonths.map(m=><option key={m}>{m}</option>)}</select></label><label className="field"><span>Ano final</span><input required type="number" min="2000" max="2200" value={endYear} onChange={e=>setEndYear(Number(e.target.value))}/></label></>}
       <label className="field"><span>{monthly?"Valor mensal (R$)":"Valor previsto (R$)"}</span><input required type="number" min="0" step="0.01" value={value} onChange={e=>setValue(e.target.value)}/></label>
-      {monthly?<label className="field"><span>Quantidade de meses</span><input required type="number" min="1" max="60" step="1" value={count} onChange={e=>setCount(Number(e.target.value))}/></label>:<label className="field"><span>Status</span><select value={status} onChange={e=>setStatus(e.target.value as ScheduleStatus)}>{scheduleStatuses.map(s=><option key={s}>{s}</option>)}</select></label>}
+      <label className="field"><span>Status</span><select value={status} onChange={e=>setStatus(e.target.value as ScheduleStatus)}>{scheduleStatuses.map(s=><option key={s}>{s}</option>)}</select></label>
+      {(count<1||(monthly&&count>60))&&<p className="document-pending-alert full">{count<1?"O período final deve ser igual ou posterior ao inicial.":"O pró-labore permite até 60 parcelas mensais."}</p>}
+      {!monthly&&!item?.recurrenceId&&<p className="panel-note full">O valor é o total da atividade durante o período. Atividades com início e fim no mesmo mês usam as mesmas datas.</p>}
+
       {monthly&&<p className="monthly-note full"><strong>{count} parcelas de {money(Number(value)||0)} · Total {money(Math.round((Number(value)||0)*100)*count/100)}</strong><br/>Será criada uma previsão para cada mês, inclusive na mudança de ano. Registre o pagamento em Lançamentos quando ele ocorrer.</p>}
       {item?.recurrenceId&&<p className="monthly-note full">Parcela {item.installment}/{item.installments}. A edição altera somente esta previsão mensal.</p>}
-    </div><div className="modal-footer"><button type="button" className="secondary-button" onClick={onClose}>Cancelar</button><>{item&&onDelete&&<button type="button" className="delete-row-button" onClick={onDelete}><Trash2 size={16}/> Excluir previsão</button>}</><button className="primary-button" disabled={!rubric}>Salvar {monthly?"previsões":"previsão"}</button></div>
+    </div><div className="modal-footer"><button type="button" className="secondary-button" onClick={onClose}>Cancelar</button><>{item&&onDelete&&<button type="button" className="delete-row-button" onClick={onDelete}><Trash2 size={16}/> Excluir previsão</button>}</><button className="primary-button" disabled={!rubric||!Number.isInteger(count)||count<1||(monthly&&count>60)}>Salvar {monthly?"previsões":"previsão"}</button></div>
   </form></div>;
 }
 

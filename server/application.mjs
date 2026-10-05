@@ -1,3 +1,4 @@
+import { schedulePeriod } from '../lib/schedule.mjs';
 import { readExcel, spreadsheetMime } from '../lib/spreadsheets.mjs';
 import { sourceOf, budgetSource, resourceSource, fundingSources } from '../lib/funding.mjs';
 import { renderReport } from './report.mjs';
@@ -106,7 +107,7 @@ function assertResource(db,projectId,item,excludeId) {
   if(item.kind==='Parcela da subvenção') {check(item.installment<=p.installments,'Parcela fora do cronograma.');check(others+cents(item.value)<=cents(p.approved),'O recurso ultrapassa o valor aprovado.');}
   if(item.kind==='Contrapartida financeira')check(others+cents(item.value)<=cents(p.counterpart,'',true),'O aporte ultrapassa a contrapartida prevista.');
 }
-function applyRemap(db,user,projectId,input,destinationStatus='Não iniciada') {
+function applyRemap(db,user,projectId,input,destinationStatus='Não iniciada',destinationDuration=1) {
   const item=validate('remaps',input),source=record(db,'schedule',item.sourceScheduleId);
   check(source.projectId===projectId,'O item de origem pertence a outro projeto.');
   item.source=sourceOf(source);item.from=rubricName(source);item.sourceActivity=source.activity;
@@ -120,7 +121,9 @@ function applyRemap(db,user,projectId,input,destinationStatus='Não iniciada') {
     if(baseline>0) {const prior=insert(db,'schedule',prepareSchedule(db,{source:item.source,rubric:item.to,activity:'Previsão preservada do orçamento anterior',value:baseline/100,month:item.month,year:item.year},projectId),projectId);audit(db,user,'migrate-budget','schedule',prior.id);}
   }
   source.value=(cents(source.value,'',true)-cents(item.value))/100;writeSchedule(db,source);
-  const destination=insert(db,'schedule',prepareSchedule(db,{source:item.source,rubric:item.to,activity:item.activity,value:item.value,month:item.month,year:item.year,status:destinationStatus},projectId),projectId);
+  const end=item.year*12+months.indexOf(item.month)+destinationDuration-1;
+  check(Math.floor(end/12)<=2200,'Ano final fora do intervalo permitido.');
+  const destination=insert(db,'schedule',prepareSchedule(db,{endMonth:months[end%12],endYear:Math.floor(end/12),source:item.source,rubric:item.to,activity:item.activity,value:item.value,month:item.month,year:item.year,status:destinationStatus},projectId),projectId);
   item.sourceVersion=source.version+1;item.destinationScheduleId=destination.id;
   audit(db,user,'remap','schedule',source.id);audit(db,user,'create','schedule',destination.id);
   return item;
@@ -137,17 +140,20 @@ function undoRemap(db,user,item) {
 function prepareSchedule(db,input,projectId) {
   const item=validate('schedule',input),project=record(db,'projects',projectId);
   item.rubric=canonicalRubric(db,projectId,item.rubric,true);item.item=item.rubric;
-  if(item.year===null){const start=new Date(project.startDate+'T00:00:00Z');item.year=start.getUTCFullYear()+(months.indexOf(item.month)<start.getUTCMonth()?1:0);}
+  try {const {duration,...period}=schedulePeriod(item,project.startDate);Object.assign(item,period);} catch(error){check(false,error.message);}
   return item;
 }
 function scheduleRows(db,input,projectId) {
-  const item=prepareSchedule(db,input,projectId),count=integer(input.monthsCount ?? 1,1,60,'Quantidade de meses');
+  const item=prepareSchedule(db,input,projectId),hasEnd=input.endMonth!=null||input.endYear!=null;
+  const duration=(item.endYear-item.year)*12+months.indexOf(item.endMonth)-months.indexOf(item.month)+1;
+  const count=integer(input.monthsCount ?? (item.rubric==='Pessoal / Pró-labore'&&hasEnd?duration:1),1,60,'Quantidade de meses');
+  if(item.rubric==='Pessoal / Pró-labore'&&hasEnd)check(count===duration,'Meses e período final devem indicar a mesma quantidade de parcelas.');
   check(count===1||item.rubric==='Pessoal / Pró-labore','O desembolso mensal está disponível para Pessoal / Pró-labore.');
   const monthly=item.rubric==='Pessoal / Pró-labore',recurrenceId=monthly?randomUUID():null;
   return Array.from({length:count},(_,index)=>{
     const d=new Date(Date.UTC(item.year,months.indexOf(item.month)+index,1));
     check(d.getUTCFullYear()<=2200,'Ano fora do intervalo permitido.');
-    return {...item,month:months[d.getUTCMonth()],year:d.getUTCFullYear(),...(monthly?{recurrenceId,installment:index+1,installments:count}: {})};
+    return {...item,month:months[d.getUTCMonth()],year:d.getUTCFullYear(),...(monthly?{endMonth:months[d.getUTCMonth()],endYear:d.getUTCFullYear(),recurrenceId,installment:index+1,installments:count}: {})};
   });
 }
 function writeSchedule(db,item) {
@@ -386,13 +392,16 @@ export function createApplication(db,{origin=process.env.APP_ORIGIN || 'http://l
             if(metadataOnly) {
               const next={...current,reason:candidate.reason,activity:candidate.activity,month:candidate.month,year:candidate.year};
               const destination=record(db,'schedule',current.destinationScheduleId);
-              writeSchedule(db,{...destination,activity:next.activity,month:next.month,year:next.year});
+              const period=schedulePeriod(destination,record(db,'projects',current.projectId).startDate),end=next.year*12+months.indexOf(next.month)+period.duration-1;
+              check(Math.floor(end/12)<=2200,'Ano final fora do intervalo permitido.');
+              writeSchedule(db,{...destination,activity:next.activity,month:next.month,year:next.year,endMonth:months[end%12],endYear:Math.floor(end/12)});
               db.prepare('UPDATE remaps SET data=?,version=version+1 WHERE id=?').run(JSON.stringify(next),current.id);
             } else {
-              const destinationStatus=current.destinationScheduleId?record(db,'schedule',current.destinationScheduleId).status:undefined;
+              const previousDestination=current.destinationScheduleId?record(db,'schedule',current.destinationScheduleId):undefined;
+              const destinationStatus=previousDestination?.status,destinationDuration=previousDestination?schedulePeriod(previousDestination,record(db,'projects',current.projectId).startDate).duration:1;
               undoRemap(db,user,current);
               db.prepare('DELETE FROM remaps WHERE id=?').run(current.id);
-              const next=applyRemap(db,user,current.projectId,{...current,...data},destinationStatus);next.date=current.date;
+              const next=applyRemap(db,user,current.projectId,{...current,...data},destinationStatus,destinationDuration);next.date=current.date;
               db.prepare('INSERT INTO remaps(id,project_id,data,value_cents,version) VALUES(?,?,?,?,?)').run(current.id,current.projectId,JSON.stringify(next),cents(next.value),current.version+1);
               assertPlan(db,current.projectId,before);
             }
@@ -402,6 +411,7 @@ export function createApplication(db,{origin=process.env.APP_ORIGIN || 'http://l
             const next=entity==='schedule'?prepareSchedule(db,data,current.projectId):validate(entity,data); const monetary=entity==='schedule';
             if(entity==='links')next.addedAt=current.addedAt;
             if(monetary&&rows(db,'remaps',current.projectId).some(r=>r.sourceScheduleId===current.id||r.destinationScheduleId===current.id))check(next.value===current.value&&next.rubric===rubricName(current)&&sourceOf(next)===sourceOf(current),'Altere o valor, a rubrica ou a fonte pelo remanejamento vinculado.');
+            if(monetary&&current.recurrenceId) {check(next.endMonth===next.month&&next.endYear===next.year,'Uma parcela mensal deve começar e terminar no mesmo mês.');}
             if(monetary&&current.recurrenceId)Object.assign(next,{recurrenceId:current.recurrenceId,installment:current.installment,installments:current.installments});
             db.prepare(`UPDATE ${entity} SET data=?,version=version+1${monetary?',value_cents=?':''} WHERE id=?`).run(JSON.stringify(next),...(monetary?[cents(next.value,'',true)]:[]),current.id);if(monetary)assertPlan(db,current.projectId,before);output=record(db,entity,current.id);
           }

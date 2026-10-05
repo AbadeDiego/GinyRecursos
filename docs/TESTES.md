@@ -33,6 +33,8 @@ Ambiente: Node.js 24.19.0, Linux, bancos SQLite temporários. A validação HTTP
 | Excel no cronograma | XLS/XLSX reais, acentos e multilinha, primeira aba, números formatados, fontes e pró-labore; rollback por limite, fórmulas, corrupção, abas vazias e limite de linhas |
 | Excel em documentos | XLS/XLSX, MIME, nome e bytes originais, substituição, download e rejeição de extensão falsa; preservação após backup no teste HTTP |
 | Órgão concedente | Campo de texto livre no cadastro e edição, persistido no projeto e no relatório, nome vazio rejeitado |
+| Períodos do cronograma | CSV/XLS/XLSX, mês único, intervalo, virada de ano, inferência pela vigência, término inválido, importação atômica, valores totais, pró-labore mensal, edição de legado, remanejamento e persistência HTTP após reinício |
+| Atrasos | Prazo final, limite de mês no fuso de Brasília, status manual e exclusão de concluídas, sem mutação do registro |
 | Rubricas de lançamentos | Novas despesas e rascunhos exigem previsão no Cronograma do mesmo projeto e fonte; validação ao registrar rascunhos e ao trocar alocação; edição de despesas legadas preservada |
 | Cadastro editável | Nome, termo, órgão, vigência, parcelas e valores; versão, idempotência, duplicidade, perfil consulta, limites por fonte, excesso legado, preservação de anexos e persistência HTTP após reinício |
 | Recursos na Visão Geral | Edição de entradas das duas fontes pela mesma API, com totais recalculados e verificação HTTP |
@@ -44,9 +46,9 @@ Comando reprodutível:
 npm run test:all
 ```
 
-Resultado da execução em 02/10/2026: **53 testes aprovados, zero falhas**, verificação TypeScript e build concluídos.
+Resultado da execução em 05/10/2026: **61 testes aprovados, zero falhas**, verificação TypeScript e build concluídos.
 
-A suíte contém 52 testes de domínio/integração e 1 cenário HTTP de produção com múltiplas verificações. TypeScript e build fazem parte do comando. Arquivos em `tests/backend.test.mjs` e `tests/production.test.mjs`.
+A suíte contém 60 testes de domínio/integração e 1 cenário HTTP de produção com múltiplas verificações. TypeScript e build fazem parte do comando. Arquivos em `tests/backend.test.mjs` e `tests/production.test.mjs`.
 
 ## Homologação no destino
 
@@ -64,5 +66,6 @@ Antes do uso real:
 8. Conferir responsividade, filtros, valores e permissões por perfil.
 9. Na Visão Geral, abrir Editar projeto, conferir os campos preenchidos, salvar e recarregar. Confirmar ausência de Importar CSV e Novo lançamento no cabeçalho.
 10. Confirmar o órgão concedente como campo de texto. Em Novo lançamento, conferir rubricas por fonte, sem duplicação para previsões mensais, seleção vazia ao trocar fonte e orientação quando não há previsão. Confirmar ausência de Adicionar rubrica em Lançamentos.
+11. No Cronograma, conferir o período compacto, abrir uma descrição longa, testar os filtros e o fundo vermelho claro em atividades vencidas. Conferir o novo modelo CSV, parcelas mensais e início/fim no mesmo mês.
 
 Não foram realizados teste de carga, pentest externo ou integração bancária. A instalação atende uma organização com usuários autorizados e vários projetos. Não constitui um SaaS com organizações independentes isoladas.

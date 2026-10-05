@@ -1,3 +1,4 @@
+import { schedulePeriodLabel, scheduleStatus } from '../lib/schedule.mjs';
 import { sourceOf, resourceSource } from '../lib/funding.mjs';
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const money = value => Number(value || 0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
@@ -28,7 +29,7 @@ export function renderReport(r) {
   <h2>4. Lançamentos e documentos</h2><p>${expenses.length} despesas registradas · ${drafts.length} rascunhos · ${pending.length} despesas com anexos a completar. O checklist é informativo; o envio de todos os documentos é opcional.</p>${table(['Data','Fonte','Rubrica','Fornecedor','Descrição','Valor','Situação','Documentos'],r.expenses.map(x=>[x.date,sourceOf(x),x.rubric,x.supplier,x.description,money(x.value),x.draft?'Rascunho':x.status,`${x.docs}/${x.requiredDocs} · ${x.documents.map(d=>d.name).join('; ')||'Sem anexos'}`]))}
   ${pending.length?`<p class="notice">Documentos a completar: ${esc(pending.map(x=>`${x.supplier} (${x.missingDocuments.map(k=>documentLabels[k]||k).join(', ')})`).join('; '))}.</p>`:''}
   <h2>5. Conciliação da conta de subvenção</h2>${table(['Data','Movimentação','Referência','Entrada / saída','Saldo acumulado'],bankRows)}<p class="muted">Somente entradas e despesas da subvenção. A conferência com o extrato é manual.</p>
-  <h2>6. Cronograma de execução</h2>${table(['Fonte','Rubrica','Atividade','Mês / ano','Valor previsto','Status'],r.schedule.map(x=>[sourceOf(x),x.rubric||x.item,x.activity,`${x.month}/${x.year||'—'}`,money(x.value),x.status]))}
+  <h2>6. Cronograma de execução</h2>${table(['Fonte','Rubrica','Atividade','Período','Valor previsto','Status'],r.schedule.map(x=>[sourceOf(x),x.rubric||x.item,x.activity,schedulePeriodLabel(x,p.startDate,false),money(x.value),scheduleStatus(x,p.startDate,new Date(r.generatedAt))]))}
   <h2>7. Remanejamentos</h2>${table(['Data','Fonte','Origem','Destino','Atividade','Valor','Justificativa','Situação'],r.remaps.map(x=>[x.date,sourceOf(x),x.from,x.to,x.activity,money(x.value),x.reason,x.status==='Aprovado'?'Aplicado':'Registro anterior pendente']))}
   <h2>8. Equipe técnica</h2>${table(['Nome','Função','Atividade'],r.team.map(x=>[x.name,x.role,x.activity]))}
   <h2>9. Documentos gerais do projeto</h2>${table(['Nome','Arquivo','Data'],(r.projectDocuments||[]).map(x=>[x.name,x.filename,x.createdAt.slice(0,10)]))}
