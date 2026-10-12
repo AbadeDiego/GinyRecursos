@@ -59,14 +59,15 @@ test('Produção standalone: autenticação, cookies, CRUD, anexos e reinício',
   assert.deepEqual(Buffer.from(await(await call('projectDocuments/'+spreadsheet.id)).arrayBuffer()),spreadsheetBytes);
   const general=await(await call('projectDocuments','POST',{projectId:project.id,name:'Projeto original'},{project:bytes})).json();assert.ok(general.id);
   assert.equal((await call('projectDocuments/'+general.id,'PATCH',{version:1,name:'Termo de outorga'})).status,200);
-  const expense=await(await call('expenses','POST',{projectId:project.id,supplier:'Fornecedor',description:'Insumos',rubric:'Material de Consumo',value:100.30,date:'2026-09-23'},{invoice:bytes,payment:bytes})).json();assert.ok(expense.id);
+  const activity=(await(await call('state')).json()).schedule.find(s=>s.rubric==='Material de Consumo');
+  const expense=await(await call('expenses','POST',{scheduleId:activity.id,projectId:project.id,supplier:'Fornecedor',description:'Insumos',rubric:'Material de Consumo',value:100.30,date:'2026-09-23'},{invoice:bytes,payment:bytes})).json();assert.ok(expense.id);
   let state=await(await call('state')).json();assert.equal(state.projects[0].executed,100.30);assert.equal(state.expenses[0].docs,2);
   const documentId=state.expenses[0].documents[0].id;assert.equal(await(await call('documents/'+documentId)).text(),bytes);
-  await stop();await start();state=await(await call('state')).json();assert.equal(state.projectDocuments.find(d=>d.id===general.id).name,'Termo de outorga');assert.equal(await(await call('projectDocuments/'+general.id)).text(),bytes);assert.equal(state.projects[0].name,'Projeto HTTP atualizado');assert.equal(state.projects[0].agency,'Fundação Estadual de Pesquisa');assert.equal(state.projects[0].approved,12000.50);assert.equal(state.projects[0].counterpart,1500.25);assert.equal(state.team[0].name,'Ana atualizada');assert.equal(state.schedule[0].month,'Janeiro');assert.equal(state.schedule[0].endMonth,'Março');assert.equal(state.schedule[0].endYear,2026);assert.equal(state.schedule[0].value,500);assert.equal(state.projects[0].executed,100.30);assert.equal(await(await call('documents/'+documentId)).text(),bytes);
+  await stop();await start();state=await(await call('state')).json();assert.equal(state.projectDocuments.find(d=>d.id===general.id).name,'Termo de outorga');assert.equal(await(await call('projectDocuments/'+general.id)).text(),bytes);assert.equal(state.projects[0].name,'Projeto HTTP atualizado');assert.equal(state.projects[0].agency,'Fundação Estadual de Pesquisa');assert.equal(state.projects[0].approved,12000.50);assert.equal(state.projects[0].counterpart,1500.25);assert.equal(state.team[0].name,'Ana atualizada');assert.equal(state.schedule[0].month,'Janeiro');assert.equal(state.schedule[0].endMonth,'Março');assert.equal(state.schedule[0].endYear,2026);assert.equal(state.schedule[0].value,500);assert.equal(state.projects[0].executed,100.30);assert.equal(state.expenses[0].scheduleId,activity.id);assert.equal(await(await call('documents/'+documentId)).text(),bytes);
   // New workflows through the actual HTTP API, including pending documents and edits.
   const recurring=await call('schedule','POST',{projectId:project.id,rubric:'Pessoal / Pró-labore',activity:'Coordenação mensal',month:'Dezembro',year:2026,value:300,monthsCount:2});assert.equal(recurring.status,201);
   const installments=await recurring.json();assert.equal(installments[1].year,2027);
-  const pending=await call('expenses','POST',{projectId:project.id,supplier:'Coordenação',description:'Pró-labore dezembro',rubric:'Pessoal / Pró-labore',value:300,date:'2026-12-20'});assert.equal(pending.status,201);
+  const pending=await call('expenses','POST',{projectId:project.id,scheduleId:installments[0].id,supplier:'Coordenação',description:'Pró-labore dezembro',rubric:'Pessoal / Pró-labore',value:300,date:'2026-12-20'});assert.equal(pending.status,201);
   const pendingExpense=await pending.json();
   assert.equal((await call('expenses/'+pendingExpense.id,'PATCH',{action:'edit',version:1,value:250})).status,200);
   const remap=await call('remaps','POST',{projectId:project.id,sourceScheduleId:installments[1].id,to:'Bolsa',activity:'Pesquisa aplicada',month:'Janeiro',year:2027,value:100,reason:'Ajuste de execução'});assert.equal(remap.status,201);
@@ -77,7 +78,7 @@ test('Produção standalone: autenticação, cookies, CRUD, anexos e reinício',
   assert.equal((await call('expenses/'+pendingExpense.id,'DELETE',{version:2})).status,200);
   assert.equal((await call('remaps/'+remapData.id,'DELETE',{version:2})).status,200);
   assert.match(await(await call('reports/'+project.id+'?format=html')).text(),/Resumo financeiro por fonte/);
-  const report=await(await call('reports/'+project.id+'?format=json')).json();assert.equal(report.project.executedSubvention,100.30);assert.equal(report.project.executedCounterpart,0);
+  const report=await(await call('reports/'+project.id+'?format=json')).json();assert.equal(report.project.executedSubvention,100.30);assert.equal(report.project.executedCounterpart,0);assert.equal(report.activityExecution.activities.find(a=>a.id===activity.id).executionPercent,10.03);
   const backupPath=execFileSync(process.execPath,[join(deployed,'scripts/backup.mjs')],{env:{...env,BACKUP_DIR:join(dir,'backups')},encoding:'utf8'}).trim();
   await stop();env.DATABASE_PATH=backupPath;await start();
   assert.equal(await(await call('documents/'+documentId)).text(),bytes);

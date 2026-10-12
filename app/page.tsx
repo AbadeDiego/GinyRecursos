@@ -1,5 +1,7 @@
 "use client";
 
+import { activityExecution } from "../lib/activity-execution.mjs";
+
 import { parseScheduleCsv, scheduleImportData, schedulePeriodLabel, scheduleStatus } from "../lib/schedule.mjs";
 
 import { sourceOf, resourceSource } from "../lib/funding.mjs";
@@ -143,6 +145,12 @@ type Expense = {
   description: string;
   rubric: string;
   source?: FundingSource;
+  scheduleId?: string | null;
+  scheduleActivity?: string | null;
+  scheduleMonth?: string | null;
+  scheduleYear?: number | null;
+  scheduleEndMonth?: string | null;
+  scheduleEndYear?: number | null;
   sourceInferred?: boolean;
   value: number;
   docs: number;
@@ -334,6 +342,7 @@ export default function Home() {
 function Workspace({initial,onLogout}: {initial: State;onLogout:()=>void}) {
 
   const [view, setView] = useState<View>("overview");
+  const [entryActivityId,setEntryActivityId]=useState("");
   const [companyList, setCompanyList] = useState<Company[]>(initial.companies);
   const [projectList, setProjectList] = useState<Project[]>(initial.projects);
   const [companyId, setCompanyId] = useState(initial.projects[0]?.companyId || initial.companies[0]?.id || "");
@@ -419,6 +428,7 @@ function Workspace({initial,onLogout}: {initial: State;onLogout:()=>void}) {
     if (firstProject) {
       setCompanyId(nextCompanyId);
       setProjectId(firstProject.id);
+      setEntryActivityId("");
     }
   };
 
@@ -427,6 +437,7 @@ function Workspace({initial,onLogout}: {initial: State;onLogout:()=>void}) {
     if (!nextProject) return;
     setCompanyId(nextProject.companyId);
     setProjectId(nextProject.id);
+    setEntryActivityId("");
     setProfileCompanyId(nextProject.companyId);
     setProjectMenuOpen(false);
     setView("overview");
@@ -441,8 +452,8 @@ function Workspace({initial,onLogout}: {initial: State;onLogout:()=>void}) {
   const createCompany = (company: Omit<Company,"id" | "version">) => commit(async()=>{const saved=await api("companies","POST",company);setProfileCompanyId(saved.id);setProjectModalCompanyId(saved.id);},()=>{setCompanyModalOpen(false);setProjectModalOpen(true);},"Empresa salva. Cadastre o primeiro projeto.");
   const editProject = (draft: ProjectDraft) => { if(editingProject)void commit(()=>api(`projects/${editingProject.id}`,"PATCH",{...draft,version:editingProject.version}),()=>setEditingProject(null),"Cadastro do projeto atualizado."); };
   const createProject = (draft: ProjectDraft) => commit(async()=>{const saved=await api("projects","POST",draft);setProjectId(saved.id);setCompanyId(saved.companyId);setProfileCompanyId(saved.companyId);},()=>{setProjectModalOpen(false);setView("overview");},"Projeto cadastrado.");
-  const navigate = (nextView: View) => {setView(nextView);setSidebarOpen(false);window.scrollTo({top:0,behavior:"smooth"});};
-  const addEntry = (entry: ExpenseDraft, draft: boolean, files:Record<string,File>) => commit(()=>api("expenses","POST",{...entry,projectId:activeProject.id,draft},files),()=>{setNewEntryOpen(false);setView("entries");},draft?"Rascunho salvo.":"Despesa registrada.");
+  const navigate = (nextView: View) => {if(nextView==="entries")setEntryActivityId("");setView(nextView);setSidebarOpen(false);window.scrollTo({top:0,behavior:"smooth"});};
+  const addEntry = (entry: ExpenseDraft, draft: boolean, files:Record<string,File>) => commit(()=>api("expenses","POST",{...entry,projectId:activeProject.id,draft},files),()=>{setNewEntryOpen(false);setEntryActivityId("");setView("entries");},draft?"Rascunho salvo.":"Despesa registrada.");
   const addResourceEntry = (entry:ResourceEntryDraft) => { const {proof,...data}=entry; return commit(()=>api("resources","POST",{...data,projectId:activeProject.id},proof?{proof}:undefined),()=>setResourceEntryOpen(false),"Recurso financeiro registrado."); };
   const addProjectLink = (draft:{name:string;url:string}) => commit(()=>api("links","POST",{...draft,projectId:activeProject.id,url:/^https?:\/\//i.test(draft.url)?draft.url:`https://${draft.url}`}),()=>setLinkModalOpen(false),"Link adicionado.");
   const saveProjectLink=(draft:{name:string;url:string})=>commit(()=>api("links/"+editingLink!.id,"PATCH",{...draft,version:editingLink!.version,url:/^https?:\/\//i.test(draft.url)?draft.url:`https://${draft.url}`}),()=>setEditingLink(null),"Link atualizado.");
@@ -570,11 +581,11 @@ function Workspace({initial,onLogout}: {initial: State;onLogout:()=>void}) {
           </div>
 
           {(view==="schedule"||view==="remaps")&&activeProject.planningWarnings?.map(w=><div className="notice-banner" key={w.source}><AlertCircle size={21}/><div><strong>{w.source}: planejamento {money(w.excess)} acima do limite</strong><span>Planejado: {money(w.planned)} · Limite: {money(w.limit)}. Você pode editar e reduzir as previsões sem aumentar o excesso. Valores já executados continuam protegidos.</span></div></div>)}
-          {view === "overview" && <Overview resources={resources.filter(r=>r.projectId===activeProject.id)} onEditResource={setEditingResource} project={activeProject} rubrics={activeRubrics} entries={projectEntries} navigate={navigate} openEntry={setSelectedExpense} />}
+          {view === "overview" && <Overview schedule={activeScheduleItems} onViewActivity={id=>{setEntryActivityId(id);setView("entries");}} resources={resources.filter(r=>r.projectId===activeProject.id)} onEditResource={setEditingResource} project={activeProject} rubrics={activeRubrics} entries={projectEntries} navigate={navigate} openEntry={setSelectedExpense} />}
           {view === "companies" && <CompaniesView companies={companyList} projects={projectList} selectedCompanyId={profileCompanyId} activeProjectId={projectId} onSelectCompany={setProfileCompanyId} onNewCompany={() => setCompanyModalOpen(true)} onNewProject={startProjectCreation} onSwitchProject={switchProject} />}
           {view === "team" && <TeamView project={activeProject} members={activeTeamMembers} onImport={() => setTeamImportOpen(true)} onAdd={() => setTeamMemberCreateOpen(true)} onEdit={setEditingTeamMember} onDelete={setTeamMemberToDelete} />}
           {view === "schedule" && <ScheduleView onAdd={()=>setScheduleCreateOpen(true)} project={activeProject} items={activeScheduleItems} onImport={() => setScheduleImportOpen(true)} onEdit={setEditingScheduleItem} />}
-          {view === "entries" && <Entries projectId={activeProject.id} entries={projectEntries} openEntry={setSelectedExpense} newEntry={() => setNewEntryOpen(true)} rubrics={rubricOptions} onEdit={setEditingExpense} onDelete={setDeletingExpense} />}
+          {view === "entries" && <Entries schedule={activeScheduleItems} activityFilter={entryActivityId} onActivityFilter={setEntryActivityId} projectId={activeProject.id} entries={projectEntries} openEntry={setSelectedExpense} newEntry={() => setNewEntryOpen(true)} rubrics={rubricOptions} onEdit={setEditingExpense} onDelete={setDeletingExpense} />}
           {view === "resources" && <Resources project={activeProject} resources={resources.filter(r=>r.projectId===activeProject.id)} onAdd={()=>setResourceEntryOpen(true)} onEdit={setEditingResource} onDelete={r=>setDeletion({entity:"resources",id:r.id,version:r.version,title:"Excluir recurso?",description:`${r.kind} · ${money(r.value)}. O registro e seus comprovantes serão excluídos e os saldos serão recalculados.`})} />}
           {view === "reconciliation" && <Reconciliation project={activeProject} entries={projectEntries} resources={resources.filter(r=>r.projectId===activeProject.id)} />}
           {view === "remaps" && <Remaps project={activeProject} remaps={remaps.filter(r=>r.projectId===activeProject.id)} onEdit={setEditingRemap} onDelete={r=>setDeletion({entity:"remaps",id:r.id,version:r.version,title:"Excluir remanejamento?",description:"O valor será devolvido à origem e a previsão criada no destino será removida. A operação será bloqueada se comprometer despesas já registradas ou remanejamentos posteriores."})} openModal={() => setRemapOpen(true)} />}
@@ -584,7 +595,7 @@ function Workspace({initial,onLogout}: {initial: State;onLogout:()=>void}) {
         </div>
       </main>
 
-      {newEntryOpen && <NewEntryModal schedule={activeScheduleItems} onOpenSchedule={()=>{setNewEntryOpen(false);navigate("schedule");}} onClose={() => setNewEntryOpen(false)} onSave={addEntry} showToast={showToast} />}
+      {newEntryOpen && <NewEntryModal expenses={projectEntries} schedule={activeScheduleItems} onOpenSchedule={()=>{setNewEntryOpen(false);navigate("schedule");}} onClose={() => setNewEntryOpen(false)} onSave={addEntry} showToast={showToast} />}
       {deletion && <DeleteRecordModal title={deletion.title} description={deletion.description} onClose={()=>setDeletion(null)} onConfirm={confirmDeletion}/>}
       {editingResource && <ResourceEntryModal initial={editingResource} project={activeProject} onClose={()=>setEditingResource(null)} onSave={editResourceEntry}/>}
       {resourceEntryOpen && <ResourceEntryModal project={activeProject} onClose={() => setResourceEntryOpen(false)} onSave={addResourceEntry} />}
@@ -601,7 +612,7 @@ function Workspace({initial,onLogout}: {initial: State;onLogout:()=>void}) {
       {editingTeamMember && <TeamMemberEditModal member={editingTeamMember} onClose={() => setEditingTeamMember(null)} onSave={saveTeamMember} />}
       {teamMemberToDelete && <DeleteTeamMemberModal member={teamMemberToDelete} onClose={() => setTeamMemberToDelete(null)} onConfirm={deleteTeamMember} />}
       {rubricCreateOpen && <RubricModal onClose={()=>setRubricCreateOpen(false)} onSave={createRubric}/>}
-      {editingExpense && <NewEntryModal initial={editingExpense} schedule={activeScheduleItems} onOpenSchedule={()=>{setEditingExpense(null);navigate("schedule");}} onClose={()=>setEditingExpense(null)} onSave={editExpense} showToast={showToast}/>}
+      {editingExpense && <NewEntryModal expenses={projectEntries} initial={editingExpense} schedule={activeScheduleItems} onOpenSchedule={()=>{setEditingExpense(null);navigate("schedule");}} onClose={()=>setEditingExpense(null)} onSave={editExpense} showToast={showToast}/>}
       {deletingExpense && <DeleteExpenseModal expense={deletingExpense} onClose={()=>setDeletingExpense(null)} onConfirm={()=>deleteExpense(deletingExpense)}/>}
       {scheduleCreateOpen && <ScheduleItemEditModal project={activeProject} rubrics={rubricOptions} onAddRubric={()=>setRubricCreateOpen(true)} onClose={()=>setScheduleCreateOpen(false)} onSave={createScheduleItem}/>}
       {editingScheduleItem && <ScheduleItemEditModal project={activeProject} rubrics={rubricOptions} onAddRubric={()=>setRubricCreateOpen(true)} item={editingScheduleItem} onClose={() => setEditingScheduleItem(null)} onSave={saveScheduleItem} onDelete={()=>setDeletion({entity:"schedule",id:editingScheduleItem.id,version:editingScheduleItem.version,title:"Excluir previsão?",description:`${editingScheduleItem.activity} · ${money(editingScheduleItem.value)}. A exclusão recalcula o planejamento e não pode comprometer despesas já registradas.`})} />}
@@ -824,13 +835,14 @@ function ProjectModal({
 }
 
 function Overview({
-  project, resources, onEditResource,
+  project, resources, onEditResource, schedule, onViewActivity,
   rubrics,
   entries,
   navigate,
   openEntry,
 }: {
   project: Project; resources:Resource[]; onEditResource:(r:Resource)=>void;
+  schedule:ScheduleItem[]; onViewActivity:(id:string)=>void;
   rubrics: typeof baseRubrics;
   entries: Expense[];
   navigate: (view: View) => void;
@@ -902,6 +914,7 @@ function Overview({
         <article className="metric-card"><div className="metric-card-head"><span>Saldo · Contrapartida</span><div className="metric-icon amber"><HandCoins size={20}/></div></div><strong>{money(project.counterpartRealized-counterExecuted)}</strong><div className="metric-footer muted">Aportes próprios menos despesas da contrapartida</div></article>
       </section>
 
+      <ActivityExecutionPanel key={project.id} project={project} schedule={schedule} expenses={entries} onViewActivity={onViewActivity}/>
       <OverviewResources resources={resources} onEdit={onEditResource} onViewAll={()=>navigate("resources")}/>
       <section className="overview-grid">
         <article className="panel rubric-panel">
@@ -970,17 +983,32 @@ function Overview({
   );
 }
 
+function ActivityExecutionPanel({project,schedule,expenses,onViewActivity}:{project:Project;schedule:ScheduleItem[];expenses:Expense[];onViewActivity:(id:string)=>void}) {
+  const [query,setQuery]=useState(""),[source,setSource]=useState("Todas"),[rubric,setRubric]=useState("Todas"),[page,setPage]=useState(0);
+  const execution=activityExecution(schedule,expenses);
+  const filtered=execution.activities.filter(item=>(source==="Todas"||sourceOf(item)===source)&&(rubric==="Todas"||(item.rubric||item.item)===rubric)&&(item.activity+" "+item.rubric).toLocaleLowerCase("pt-BR").includes(query.toLocaleLowerCase("pt-BR")));
+  const currentPage=Math.min(page,Math.max(0,Math.ceil(filtered.length/8)-1)),visible=filtered.slice(currentPage*8,currentPage*8+8);
+  const percentage=(value:number)=>value.toLocaleString("pt-BR",{maximumFractionDigits:2})+"%";
+  return <section className="panel activity-execution-panel"><div className="panel-header"><div><h2>Execução financeira por atividade</h2><p>Valor lançado ÷ valor previsto da atividade. Rascunhos não entram no cálculo.</p></div></div>
+    {execution.unallocated.count>0&&<div className="activity-unallocated"><AlertCircle size={18}/><div><strong>{money(execution.unallocated.value)} em {execution.unallocated.count} lançamentos sem atividade vinculada</strong><p>Esses valores estão nos totais do projeto, mas ainda não entram nos percentuais das atividades.</p></div><button className="secondary-button small" onClick={()=>onViewActivity("unallocated")}>Vincular atividades</button></div>}
+    {!schedule.length?<div className="empty-state compact"><CalendarDays size={26}/><p>Cadastre atividades no Cronograma para acompanhar a execução financeira.</p></div>:<>
+    <div className="activity-execution-filters"><label className="field"><span>Buscar atividade</span><input type="search" placeholder="Nome da atividade" value={query} onChange={e=>{setQuery(e.target.value);setPage(0);}}/></label><label className="field"><span>Fonte</span><select value={source} onChange={e=>{setSource(e.target.value);setPage(0);}}><option>Todas</option><option>Subvenção</option><option>Contrapartida</option></select></label><label className="field"><span>Rubrica</span><select value={rubric} onChange={e=>{setRubric(e.target.value);setPage(0);}}><option>Todas</option>{Array.from(new Set(schedule.map(item=>item.rubric||item.item))).map(name=><option key={name}>{name}</option>)}</select></label></div>
+    <div className="table-wrap"><table className="data-table activity-execution-table"><thead><tr><th>Atividade</th><th>Previsto</th><th>Executado</th><th>Execução financeira</th><th>Ações</th></tr></thead><tbody>{visible.map(item=><tr key={item.id}><td><ScheduleActivity activity={item.activity}/><small>{item.rubric||item.item} · {sourceOf(item)} · {schedulePeriodLabel(item,project.startDate)} · #{item.id.slice(0,6)}</small></td><td className="value-cell">{money(item.planned)}</td><td className="value-cell">{money(item.executed)}<small>{item.expenseCount} lançamentos</small></td><td><strong>{item.planned>0?percentage(item.executionPercent):"Sem previsão de valor"}</strong><ProgressBar value={Math.min(100,item.executionPercent)}/><small>Saldo: {money(item.available)}</small></td><td><button className="secondary-button small" onClick={()=>onViewActivity(item.id)}>Ver lançamentos</button></td></tr>)}{!visible.length&&<tr><td colSpan={5}>Nenhuma atividade encontrada com estes filtros.</td></tr>}</tbody></table></div>
+    <div className="activity-execution-pagination"><span>{filtered.length?currentPage*8+1:0}–{Math.min(currentPage*8+8,filtered.length)} de {filtered.length} atividades</span><div><button className="secondary-button small" disabled={!currentPage} onClick={()=>setPage(currentPage-1)}>Anterior</button><button className="secondary-button small" disabled={(currentPage+1)*8>=filtered.length} onClick={()=>setPage(currentPage+1)}>Próximas</button></div></div></>}
+  </section>;
+}
+
 function ExpenseTable({ entries, onOpen, onEdit, onDelete }: { entries: Expense[]; onOpen: (expense: Expense) => void; onEdit?:(e:Expense)=>void; onDelete?:(e:Expense)=>void }) {
   return (
     <div className="table-wrap">
       <table className="data-table">
-        <thead><tr><th>Data / ID</th><th>Fornecedor e descrição</th><th>Rubrica</th><th>Documentos</th><th>Valor</th><th>Situação</th><th /></tr></thead>
+        <thead><tr><th>Data / ID</th><th>Fornecedor e descrição</th><th>Rubrica / atividade</th><th>Documentos</th><th>Valor</th><th>Situação</th><th /></tr></thead>
         <tbody>
           {entries.map((entry) => (
             <tr key={entry.id} onClick={() => onOpen(entry)}>
               <td><strong>{entry.date}</strong><span>{entry.id}</span></td>
               <td><strong>{entry.supplier}</strong><span>{entry.description}</span></td>
-              <td><span className="category-pill">{entry.rubric}</span><small>{sourceOf(entry)}{entry.sourceInferred?" · conferir fonte":""}</small></td>
+              <td><span className="category-pill">{entry.rubric}</span><small>{sourceOf(entry)}{entry.sourceInferred?" · conferir fonte":""}</small><span className={entry.scheduleId?"expense-activity-label":"warning-text"}>{entry.scheduleActivity||"Sem atividade vinculada"}</span></td>
               <td><span className={entry.docs === entry.requiredDocs ? "docs-count complete" : "docs-count incomplete"}>{entry.docs === entry.requiredDocs ? <FileCheck2 size={15} /> : <AlertCircle size={15} />}{entry.docs}/{entry.requiredDocs} anexos</span>{entry.docs<entry.requiredDocs&&<span className="warning-text">Documentos pendentes</span>}</td>
               <td className="value-cell">{money(entry.value)}</td>
               <td><StatusBadge status={entry.status} /></td>
@@ -994,13 +1022,13 @@ function ExpenseTable({ entries, onOpen, onEdit, onDelete }: { entries: Expense[
 }
 
 function Entries({
-  entries,
+  entries, schedule, activityFilter, onActivityFilter,
   openEntry,
   newEntry,
   rubrics, onEdit, onDelete,
   projectId,
 }: {
-  entries: Expense[];
+  entries: Expense[]; schedule:ScheduleItem[]; activityFilter:string; onActivityFilter:(id:string)=>void;
   openEntry: (expense: Expense) => void;
   newEntry: () => void;
   rubrics:RubricOption[]; onEdit:(e:Expense)=>void; onDelete:(e:Expense)=>void;
@@ -1010,8 +1038,8 @@ function Entries({
   const [status, setStatus] = useState("Todos");
   const [rubricFilter,setRubricFilter]=useState("Todas as rubricas"),[start,setStart]=useState(""),[end,setEnd]=useState("");
   const filtered = entries.filter((entry) => {
-    const matchesQuery = (entry.supplier + entry.description + entry.rubric + entry.id).toLowerCase().includes(query.toLowerCase());
-    return matchesQuery && (status === "Todos" || entry.status === status) && (rubricFilter === "Todas as rubricas" || entry.rubric === rubricFilter) && (!start || entry.date >= start) && (!end || entry.date <= end);
+    const matchesQuery = (entry.supplier + entry.description + entry.rubric + (entry.scheduleActivity||"") + entry.id).toLowerCase().includes(query.toLowerCase());
+    return (activityFilter===""||(activityFilter==="unallocated"?!entry.scheduleId:entry.scheduleId===activityFilter)) && matchesQuery && (status === "Todos" || entry.status === status) && (rubricFilter === "Todas as rubricas" || entry.rubric === rubricFilter) && (!start || entry.date >= start) && (!end || entry.date <= end);
   });
   const total = filtered.filter(e=>!e.draft).reduce((sum, entry) => sum + Math.round(entry.value*100), 0)/100;
   return (
@@ -1022,6 +1050,7 @@ function Entries({
         <div><span>Documentação pendente</span><strong className="warning-text">{entries.filter((entry) => entry.docs < entry.requiredDocs).length}</strong><small>itens para revisar</small></div>
         <div><span>Período</span><strong>{start || "Início"} / {end || "Atual"}</strong><small>datas selecionadas</small></div>
       </section>
+      <label className="field entries-activity-filter"><span>Atividade do Cronograma</span><select value={activityFilter} onChange={e=>onActivityFilter(e.target.value)}><option value="">Todas as atividades</option><option value="unallocated">Sem atividade vinculada</option>{schedule.map(item=><option key={item.id} value={item.id}>{item.activity.slice(0,100)} · {sourceOf(item)} · {schedulePeriodLabel(item,undefined)} · #{item.id.slice(0,6)}</option>)}</select></label>
       <ExpenseDocuments entries={entries} openEntry={openEntry}/>
       <section className="panel">
         <div className="toolbar">
@@ -1924,19 +1953,20 @@ function ProjectLinkModal({
   );
 }
 
-type ExpenseDraft = Pick<Expense,"source"|"supplier"|"description"|"rubric"|"value"|"date"|"taxId"|"notes">;
+type ExpenseDraft = Pick<Expense,"scheduleId"|"source"|"supplier"|"description"|"rubric"|"value"|"date"|"taxId"|"notes">;
 function NewEntryModal({
   onClose,
   onSave,
-  initial, schedule, onOpenSchedule,
+  initial, schedule, expenses, onOpenSchedule,
   showToast,
 }: {
   onClose: () => void;
   onSave: (entry: ExpenseDraft, draft: boolean, files: Record<string,File>) => void;
-  initial?:Expense; schedule:ScheduleItem[]; onOpenSchedule:()=>void;
+  initial?:Expense; schedule:ScheduleItem[]; expenses:Expense[]; onOpenSchedule:()=>void;
   showToast: (message: string) => void;
 }) {
   const [step, setStep] = useState(1);
+  const [scheduleId,setScheduleId]=useState(initial?.scheduleId||"");
   const [rubric, setRubric] = useState(initial?.rubric || "");
   const [source,setSource]=useState<FundingSource>(initial?sourceOf(initial):schedule.some(s=>sourceOf(s)==="Subvenção")?"Subvenção":schedule.length?sourceOf(schedule[0]):"Subvenção");
   const [supplier, setSupplier] = useState(initial?.supplier || "");
@@ -1948,7 +1978,10 @@ function NewEntryModal({
   const scheduledRubrics=Array.from(new Set(schedule.filter(item=>sourceOf(item)===source).map(item=>item.rubric||item.item)));
   const legacyRubric=initial && source===sourceOf(initial) && !scheduledRubrics.includes(initial.rubric) ? initial.rubric : "";
   const allowedRubric=scheduledRubrics.includes(rubric)||Boolean(legacyRubric && rubric===legacyRubric);
-  const firstStepComplete = Boolean(supplier.trim() && description.trim() && allowedRubric && date && Number(value) > 0);
+  const activities=activityExecution(schedule,expenses.filter(e=>e.id!==initial?.id)).activities.filter(item=>(item.rubric||item.item)===rubric&&sourceOf(item)===source);
+  const selectedActivity=activities.find(item=>item.id===scheduleId);
+  const keepUnallocated=Boolean(initial&&!initial.scheduleId&&!scheduleId&&source===sourceOf(initial)&&rubric===initial.rubric);
+  const firstStepComplete = Boolean(supplier.trim() && description.trim() && allowedRubric && (selectedActivity||keepUnallocated) && date && Number(value) > 0);
 
   const setFile = (key: string, file?: File) => {
     if (file) setFiles((current) => ({ ...current, [key]: file }));
@@ -1958,7 +1991,7 @@ function NewEntryModal({
       showToast("Preencha os dados básicos antes de salvar.");
       return;
     }
-    onSave({ supplier, description, rubric, source, value: Number(value),date,taxId,notes }, draft, Object.fromEntries(Object.entries(files).filter(([key])=>requiredKeys.includes(key))));
+    onSave({ scheduleId:scheduleId||null, supplier, description, rubric, source, value: Number(value),date,taxId,notes }, draft, Object.fromEntries(Object.entries(files).filter(([key])=>requiredKeys.includes(key))));
   };
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
@@ -1970,10 +2003,13 @@ function NewEntryModal({
         </div>
         {step === 1 ? (
           <div className="modal-body form-grid">
-            <SourceField value={source} onChange={next=>{setSource(next);setRubric("");}}/>
-            <label className="field full"><span>Rubrica *</span><select required value={rubric} onChange={event=>setRubric(event.target.value)}><option value="">Selecione uma rubrica do Cronograma</option>{scheduledRubrics.map(name=><option key={name} value={name}>{name}</option>)}{legacyRubric&&<option value={legacyRubric}>{legacyRubric} — lançamento existente</option>}</select><small>Rubricas previstas no Cronograma para {source}. O saldo considera esta fonte de recursos.</small></label>
+            <SourceField value={source} onChange={next=>{setSource(next);setRubric("");setScheduleId("");}}/>
+            <label className="field full"><span>Rubrica *</span><select required value={rubric} onChange={event=>{setRubric(event.target.value);setScheduleId("");}}><option value="">Selecione uma rubrica do Cronograma</option>{scheduledRubrics.map(name=><option key={name} value={name}>{name}</option>)}{legacyRubric&&<option value={legacyRubric}>{legacyRubric} — lançamento existente</option>}</select><small>Rubricas previstas no Cronograma para {source}. O saldo considera esta fonte de recursos.</small></label>
             {!scheduledRubrics.length&&<div className="document-pending-alert full"><AlertCircle size={18}/><div><strong>Nenhuma rubrica prevista para {source}.</strong><p>Cadastre uma previsão no Cronograma antes de criar um lançamento com esta fonte.</p><button type="button" className="secondary-button small" onClick={onOpenSchedule}>Abrir Cronograma</button></div></div>}
             {legacyRubric&&<p className="panel-note full">A rubrica deste lançamento antigo foi preservada. Para trocar a rubrica ou registrar novas despesas, cadastre a previsão no Cronograma.</p>}
+            {rubric&&<label className="field full"><span>Atividade do Cronograma *</span><select required={!keepUnallocated} value={scheduleId} onChange={e=>setScheduleId(e.target.value)}><option value="">{keepUnallocated?"Sem atividade vinculada — lançamento anterior":"Selecione a atividade desta despesa"}</option>{activities.map(item=><option key={item.id} value={item.id}>{item.activity.slice(0,110)} · {schedulePeriodLabel(item,undefined)} · #{item.id.slice(0,6)}</option>)}</select><small>Escolha o item específico do Cronograma. Atividades da mesma rubrica têm saldos e percentuais separados.</small></label>}
+            {selectedActivity&&<div className="activity-allocation-summary full"><strong>{selectedActivity.activity}</strong><span>Previsto: {money(selectedActivity.planned)} · Executado: {money(selectedActivity.executed)} · Disponível: <b>{money(selectedActivity.available)}</b></span>{initial?.scheduleId===selectedActivity.id&&<small>O disponível considera a substituição do valor deste lançamento.</small>}{Number(value)>selectedActivity.available&&<small className="warning-text">O valor informado supera o saldo desta atividade. Ajuste o valor ou o planejamento antes de registrar.</small>}</div>}
+            {keepUnallocated&&<p className="document-pending-alert full">Este lançamento anterior está sem atividade vinculada. Selecione a atividade para incluí-lo no percentual de execução financeira.</p>}
             {initial?.status==="Conciliado"&&<p className="document-pending-alert full">Ao editar, a despesa voltará para Em análise e precisará de nova conferência bancária.</p>}
             <label className="field"><span>Fornecedor / favorecido *</span><input value={supplier} onChange={(event) => setSupplier(event.target.value)} placeholder="Nome ou razão social" /></label>
             <label className="field"><span>CPF / CNPJ</span><input value={taxId} onChange={e=>setTaxId(e.target.value)} placeholder="00.000.000/0000-00" /></label>
@@ -2054,5 +2090,5 @@ function ExpenseModal({expense,onClose,onUpload,onUpdate,admin,onEdit,onDelete}:
  const keys=["invoice","payment","quote1","quote2","quote3"];
  const labels:Record<string,string>={invoice:"Nota fiscal / recibo",payment:"Comprovante de pagamento",quote1:"Orçamento 1",quote2:"Orçamento 2",quote3:"Orçamento 3"};
  const pending=Object.fromEntries(Object.entries(files).filter(([kind])=>!expense.documents?.some(d=>d.kind===kind)));
- return <div className="modal-backdrop"><section className="modal expense-modal" role="dialog" aria-modal="true" aria-label="Detalhes da despesa"><div className="modal-header"><div><span>{expense.date}</span><h2>{expense.supplier}</h2></div><button className="secondary-button" onClick={onClose}>Fechar</button></div><div className="expense-detail-hero"><strong>{money(expense.value)}</strong><StatusBadge status={expense.status}/></div><div className="modal-body"><p>{expense.description}</p><p>{expense.rubric} · {sourceOf(expense)}</p>{expense.notes&&<p>{expense.notes}</p>}<div className="expense-actions"><button className="secondary-button" onClick={()=>onEdit(expense)}><Pencil size={16}/> Editar lançamento</button><button className="delete-row-button" onClick={()=>onDelete(expense)}><Trash2 size={16}/> Excluir lançamento</button></div>{expense.docs<expense.requiredDocs&&<div className="document-pending-alert"><AlertCircle size={18}/><strong>Documentos pendentes: faltam {expense.requiredDocs-expense.docs} anexos.</strong></div>}<h3>Documentos do lançamento</h3><p className="panel-note">Todos os anexos são opcionais. O checklist ajuda a acompanhar a documentação.</p><div className="file-checklist">{keys.map(kind=>{const doc=expense.documents?.find(d=>d.kind===kind);return doc?<a className="complete file-document-download" key={kind} href={"/api/documents/"+doc.id}><FileCheck2 size={18}/><span><strong>{labels[kind]}</strong><small>{doc.name}</small></span><Download size={18}/></a>:<UploadBox key={kind} label={labels[kind]} file={files[kind]?.name} onFile={file=>{if(file)setFiles({...files,[kind]:file});}}/>;})}</div>{Object.keys(pending).length>0&&<button className="secondary-button" onClick={()=>onUpload(expense,pending)}>Salvar anexos selecionados</button>}{!expense.draft&&sourceOf(expense)==="Subvenção"&&admin&&expense.status!=="Conciliado"&&<label className="field"><span>Referência do extrato conferido</span><input value={reference} onChange={e=>setReference(e.target.value)} placeholder="Identificador bancário da transação"/></label>}</div><div className="modal-footer"><button className="secondary-button" onClick={onClose}>Fechar</button>{expense.draft?<button className="primary-button" onClick={()=>onUpdate(expense,"submit")}>Registrar despesa</button>:sourceOf(expense)==="Subvenção"&&admin&&expense.status!=="Conciliado"?<button className="primary-button" disabled={!reference.trim()} onClick={()=>onUpdate(expense,"reconcile",reference)}>Confirmar conferência do extrato</button>:null}</div></section></div>;
+ return <div className="modal-backdrop"><section className="modal expense-modal" role="dialog" aria-modal="true" aria-label="Detalhes da despesa"><div className="modal-header"><div><span>{expense.date}</span><h2>{expense.supplier}</h2></div><button className="secondary-button" onClick={onClose}>Fechar</button></div><div className="expense-detail-hero"><strong>{money(expense.value)}</strong><StatusBadge status={expense.status}/></div><div className="modal-body"><p>{expense.description}</p><p>{expense.rubric} · {sourceOf(expense)}</p><div className="activity-allocation-summary"><strong>Atividade do Cronograma</strong><span>{expense.scheduleActivity||"Sem atividade vinculada — escolha a atividade em Editar lançamento."}</span>{expense.scheduleId&&<small>{schedulePeriodLabel({month:expense.scheduleMonth,year:expense.scheduleYear,endMonth:expense.scheduleEndMonth,endYear:expense.scheduleEndYear},undefined)}</small>}</div>{expense.notes&&<p>{expense.notes}</p>}<div className="expense-actions"><button className="secondary-button" onClick={()=>onEdit(expense)}><Pencil size={16}/> Editar lançamento</button><button className="delete-row-button" onClick={()=>onDelete(expense)}><Trash2 size={16}/> Excluir lançamento</button></div>{expense.docs<expense.requiredDocs&&<div className="document-pending-alert"><AlertCircle size={18}/><strong>Documentos pendentes: faltam {expense.requiredDocs-expense.docs} anexos.</strong></div>}<h3>Documentos do lançamento</h3><p className="panel-note">Todos os anexos são opcionais. O checklist ajuda a acompanhar a documentação.</p><div className="file-checklist">{keys.map(kind=>{const doc=expense.documents?.find(d=>d.kind===kind);return doc?<a className="complete file-document-download" key={kind} href={"/api/documents/"+doc.id}><FileCheck2 size={18}/><span><strong>{labels[kind]}</strong><small>{doc.name}</small></span><Download size={18}/></a>:<UploadBox key={kind} label={labels[kind]} file={files[kind]?.name} onFile={file=>{if(file)setFiles({...files,[kind]:file});}}/>;})}</div>{Object.keys(pending).length>0&&<button className="secondary-button" onClick={()=>onUpload(expense,pending)}>Salvar anexos selecionados</button>}{!expense.draft&&sourceOf(expense)==="Subvenção"&&admin&&expense.status!=="Conciliado"&&<label className="field"><span>Referência do extrato conferido</span><input value={reference} onChange={e=>setReference(e.target.value)} placeholder="Identificador bancário da transação"/></label>}</div><div className="modal-footer"><button className="secondary-button" onClick={onClose}>Fechar</button>{expense.draft?<button className="primary-button" onClick={()=>onUpdate(expense,"submit")}>Registrar despesa</button>:sourceOf(expense)==="Subvenção"&&admin&&expense.status!=="Conciliado"?<button className="primary-button" disabled={!reference.trim()} onClick={()=>onUpdate(expense,"reconcile",reference)}>Confirmar conferência do extrato</button>:null}</div></section></div>;
 }

@@ -64,3 +64,7 @@ CREATE INDEX team_project ON team(project_id);
 
 CREATE TABLE projectDocuments(id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id), data TEXT NOT NULL CHECK(json_valid(data)), bytes BLOB NOT NULL, version INTEGER NOT NULL DEFAULT 1);
 CREATE INDEX projectDocuments_project ON projectDocuments(project_id);
+
+-- Migration 5: explicit allocation to a schedule activity; old expenses remain NULL.
+ALTER TABLE expenses ADD COLUMN schedule_id TEXT REFERENCES schedule(id) ON DELETE RESTRICT;
+CREATE INDEX expenses_schedule ON expenses(schedule_id);

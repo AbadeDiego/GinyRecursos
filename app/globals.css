@@ -6092,3 +6092,20 @@ h1, h2, h3 { letter-spacing: -.025em; }
 .schedule-activity-copy details p { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.6; margin: 8px 0; }
 .csv-period-help { background: #f6f8f7; border-radius: 10px; padding: 14px 16px; margin-top: 12px; font-size: 14px; }
 .csv-period-help p { margin: 10px 0 0; line-height: 1.6; }
+
+.activity-execution-panel { margin-bottom: 24px; }
+.activity-execution-filters { display: grid; grid-template-columns: 1.2fr .8fr 1fr; gap: 14px; padding: 0 22px 18px; }
+.activity-execution-table { min-width: 920px; }
+.activity-execution-table td:first-child { min-width: 290px; max-width: 480px; }
+.activity-execution-table td:nth-child(4) { min-width: 160px; }
+.activity-execution-table .schedule-activity { font-weight: 600; }
+.activity-execution-pagination { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 22px; color: #59655f; font-size: 14px; }
+.activity-execution-pagination > div { display: flex; gap: 8px; }
+.activity-unallocated { display: flex; align-items: center; gap: 12px; padding: 16px; margin: 0 22px 18px; border-radius: 10px; background: #fff7e8; color: #755117; }
+.activity-unallocated > div { flex: 1; }
+.activity-unallocated p { margin: 4px 0 0; font-size: 14px; line-height: 1.5; }
+.activity-allocation-summary { display: grid; gap: 8px; background: #f0f7f4; border: 1px solid #d9e7df; border-radius: 10px; padding: 16px; overflow-wrap: anywhere; line-height: 1.5; }
+.activity-allocation-summary small { color: #59655f; }
+.expense-activity-label { max-width: 290px; white-space: normal; overflow-wrap: anywhere; }
+.entries-activity-filter { max-width: 700px; margin-bottom: 18px; }
+@media(max-width: 700px) { .activity-execution-filters { grid-template-columns: 1fr; } .activity-unallocated { flex-wrap: wrap; } .activity-execution-pagination { flex-wrap: wrap; } }

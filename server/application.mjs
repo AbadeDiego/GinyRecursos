@@ -1,3 +1,4 @@
+import { activityExecution } from '../lib/activity-execution.mjs';
 import { schedulePeriod } from '../lib/schedule.mjs';
 import { readExcel, spreadsheetMime } from '../lib/spreadsheets.mjs';
 import { sourceOf, budgetSource, resourceSource, fundingSources } from '../lib/funding.mjs';
@@ -10,7 +11,7 @@ import { HttpError, check, cents, text, validate, rubrics, months, integer } fro
 const entities = ['companies','projects','team','schedule','links','expenses','resources','budget','remaps','rubrics','projectDocuments'];
 const moneyTables = ['schedule','expenses','resources','budget','remaps'];
 const docKinds = ['invoice','payment','quote1','quote2','quote3','support','proof','project'];
-const decode = row => row ? { ...JSON.parse(row.data), id:row.id, ...(row.project_id ? {projectId:row.project_id} : {}), version:row.version } : null;
+const decode = row => row ? { ...JSON.parse(row.data), ...('schedule_id' in row?{scheduleId:row.schedule_id}:{}), id:row.id, ...(row.project_id ? {projectId:row.project_id} : {}), version:row.version } : null;
 const required = () => ['invoice','payment','quote1','quote2','quote3'];
 const now = () => new Date().toISOString();
 const json = (data, status=200, headers={}) => Response.json(data, {status, headers:{'Cache-Control':'no-store','X-Content-Type-Options':'nosniff',...headers}});
@@ -22,12 +23,13 @@ function insert(db,entity,data,projectId) {
   if (entity==='projects') { columns.push('company_id'); values.push(data.companyId); }
   else if (entity!=='companies') { columns.push('project_id'); values.push(projectId); }
   if (moneyTables.includes(entity)) { columns.push('value_cents'); values.push(cents(entity==='budget' ? data.valorTotal : data.value,'Valor',entity==='budget'||entity==='schedule')); }
+  if (entity==='expenses') { columns.push('schedule_id');values.push(data.scheduleId||null); }
   if (entity==='resources') { columns.push('installment'); values.push(data.installment); }
   db.prepare(`INSERT INTO ${entity}(${columns.join(',')}) VALUES(${columns.map(()=>'?').join(',')})`).run(...values);
   return record(db,entity,id);
 }
 function documents(db, column, id) { return db.prepare(`SELECT id,kind,name,mime,length(bytes) AS size FROM documents WHERE ${column}=?`).all(id); }
-function expenseView(db,expense) { const docs=documents(db,'expense_id',expense.id), keys=required(expense); return {...expense,documents:docs,docs:docs.filter(d=>keys.includes(d.kind)).length,requiredDocs:keys.length,missingDocuments:keys.filter(k=>!docs.some(d=>d.kind===k))}; }
+function expenseView(db,expense) { const activity=expense.scheduleId?record(db,'schedule',expense.scheduleId):null; const docs=documents(db,'expense_id',expense.id), keys=required(expense); return {...expense,scheduleActivity:activity?.activity||null,scheduleMonth:activity?.month||null,scheduleYear:activity?.year||null,scheduleEndMonth:activity?.endMonth||null,scheduleEndYear:activity?.endYear||null,documents:docs,docs:docs.filter(d=>keys.includes(d.kind)).length,requiredDocs:keys.length,missingDocuments:keys.filter(k=>!docs.some(d=>d.kind===k))}; }
 function projectView(db,project) {
   const rs=rows(db,'resources',project.id), ex=rows(db,'expenses',project.id);
   const sum=list=>list.reduce((total,item)=>total+cents(item.value),0)/100;
@@ -84,6 +86,7 @@ function planBaseline(db,projectId) {
 // Legacy overruns may be repaired incrementally. Never increase an existing
 // overrun or reduce any rubric below its previously executed coverage.
 function assertPlan(db,projectId,before) {
+  assertActivityPlans(db,projectId);
   const p=record(db,'projects',projectId);
   for(const source of fundingSources) {
     const names=planNames(db,projectId,source),total=[...names].reduce((sum,name)=>sum+plannedRubric(db,projectId,name,source),0),limit=cents(source==='Subvenção'?p.approved:p.counterpart,'',true);
@@ -96,8 +99,25 @@ function scheduledExpenseRubric(db,projectId,item) {
   check(rows(db,'schedule',projectId).some(s=>rubricName(s)===name&&sourceOf(s)===sourceOf(item)),`Cadastre a rubrica ${name} no Cronograma com a fonte ${sourceOf(item)} antes de registrar esta despesa.`);
   return name;
 }
+function expenseActivity(db,projectId,item,required=true) {
+  if(!required&&!item.scheduleId)return null;
+  check(item.scheduleId,'Selecione a atividade do Cronograma para este lançamento.');
+  const activity=record(db,'schedule',item.scheduleId);
+  check(activity.projectId===projectId,'A atividade pertence a outro projeto.');
+  check(rubricName(activity)===item.rubric&&sourceOf(activity)===sourceOf(item),'A atividade não corresponde à fonte e à rubrica selecionadas.');
+  return activity;
+}
+function assertActivityPlans(db,projectId) {
+  const expenses=rows(db,'expenses',projectId);
+  for(const expense of expenses)if(expense.scheduleId)expenseActivity(db,projectId,expense);
+  for(const item of activityExecution(rows(db,'schedule',projectId),expenses).activities)check(item.available>=0,`O valor previsto para a atividade “${item.activity}” não pode ficar abaixo dos ${brl(cents(item.executed,'',true))} já executados.`);
+}
+function assertNoActivityExpenses(db,projectId,id) {
+  check(!rows(db,'expenses',projectId).some(e=>e.scheduleId===id),'Esta atividade possui lançamentos ou rascunhos vinculados. Reatribua-os a outra atividade ou exclua-os antes de excluir ou recriar esta previsão.');
+}
 function assertExpense(db,projectId,item,excludeId) {
-  const source=sourceOf(item);
+  const source=sourceOf(item),activity=expenseActivity(db,projectId,item,false);
+  if(activity){const spent=rows(db,'expenses',projectId).filter(e=>e.id!==excludeId&&!e.draft&&e.scheduleId===activity.id).reduce((sum,e)=>sum+cents(e.value),0);check(spent+cents(item.value)<=cents(activity.value,'',true),`Saldo insuficiente na atividade selecionada. Disponível: ${brl(cents(activity.value,'',true)-spent)}.`);}
   check(availableRubric(db,projectId,item.rubric,excludeId,source)>=cents(item.value),'Saldo insuficiente na rubrica e fonte selecionadas. Cadastre ou ajuste sua previsão no cronograma.');
   const p=record(db,'projects',projectId), others=rows(db,'expenses',projectId).filter(e=>e.id!==excludeId&&!e.draft&&sourceOf(e)===source).reduce((sum,e)=>sum+cents(e.value),0);
   check(others+cents(item.value)<=cents(source==='Subvenção'?p.approved:p.counterpart,'',true),`A despesa supera o total de ${source} previsto no projeto.`);
@@ -130,6 +150,7 @@ function applyRemap(db,user,projectId,input,destinationStatus='Não iniciada',de
 }
 function undoRemap(db,user,item) {
   if(item.status!=='Aprovado'||!item.sourceScheduleId)return;
+  assertNoActivityExpenses(db,item.projectId,item.destinationScheduleId);
   const destination=record(db,'schedule',item.destinationScheduleId),source=record(db,'schedule',item.sourceScheduleId);
   check(!rows(db,'remaps',item.projectId).some(r=>r.id!==item.id&&(r.sourceScheduleId===destination.id||r.destinationScheduleId===destination.id)),'O destino foi usado em outro remanejamento. Edite ou exclua primeiro o remanejamento posterior.');
   check(cents(destination.value,'',true)===cents(item.value)&&sourceOf(destination)===sourceOf(source)&&rubricName(destination)===item.to&&rubricName(source)===item.from,'As previsões vinculadas foram alteradas. Revise o cronograma antes de desfazer este remanejamento.');
@@ -206,7 +227,7 @@ function storeFiles(db,projectId,entity,id,files) {
 function csvExport(state, projectId) {
   const list=state.expenses.filter(e=>e.projectId===projectId);
   const cell=value=>'"'+String(value??'').replace(/^[=+@\-\t\r]/,"'$&").replaceAll('"','""')+'"';
-  return '\ufeff'+[['ID','Data','Fornecedor','Descrição','Rubrica','Fonte','Valor','Situação','Rascunho','Documentos'],...list.map(e=>[e.id,e.date,e.supplier,e.description,e.rubric,sourceOf(e),e.value.toFixed(2).replace('.',','),e.status,e.draft?'Sim':'Não',`${e.docs}/${e.requiredDocs}`])].map(r=>r.map(cell).join(';')).join('\r\n');
+  return '\ufeff'+[['ID','Data','Fornecedor','Descrição','Rubrica','Fonte','Valor','Situação','Rascunho','Documentos','ID da atividade','Atividade'],...list.map(e=>[e.id,e.date,e.supplier,e.description,e.rubric,sourceOf(e),e.value.toFixed(2).replace('.',','),e.status,e.draft?'Sim':'Não',`${e.docs}/${e.requiredDocs}`,e.scheduleId||"",e.scheduleActivity||"Sem atividade vinculada"])].map(r=>r.map(cell).join(';')).join('\r\n');
 }
 
 export function createApplication(db,{origin=process.env.APP_ORIGIN || 'http://localhost:3000'}={}) {
@@ -257,6 +278,7 @@ export function createApplication(db,{origin=process.env.APP_ORIGIN || 'http://l
         const project=projectView(db,record(db,'projects',path[1])),state=snapshot(db,user),format=url.searchParams.get('format');
         const report={generatedAt:now(),company:record(db,'companies',project.companyId),project};
         for(const entity of ['expenses','resources','schedule','budget','remaps','team','links','rubrics','projectDocuments'])report[entity]=state[entity].filter(r=>r.projectId===project.id);
+        report.activityExecution=activityExecution(report.schedule,report.expenses);
         report.planning=fundingSources.flatMap(source=>[...planNames(db,project.id,source)].map(rubric=>({source,rubric,planned:plannedRubric(db,project.id,rubric,source)/100,executed:report.expenses.filter(e=>!e.draft&&e.rubric===rubric&&sourceOf(e)===source).reduce((sum,e)=>sum+cents(e.value),0)/100})));
         report.reconciliation={incoming:report.resources.filter(r=>resourceSource(r)==='Subvenção'),outgoing:report.expenses.filter(e=>!e.draft&&sourceOf(e)==='Subvenção'),balance:(cents(project.released,'',true)+cents(project.income,'',true)-cents(project.executedSubvention,'',true))/100};
         if(format==='json')return json(report,200,{'Content-Disposition':'attachment; filename="projeto-completo.json"'});
@@ -318,7 +340,7 @@ export function createApplication(db,{origin=process.env.APP_ORIGIN || 'http://l
             const all=[...rubrics,...rows(db,'rubrics',data.projectId).map(r=>r.name),...rows(db,'schedule',data.projectId).map(rubricName)];
             check(!all.some(n=>normalized(n)===normalized(item.name)),'Esta rubrica já está cadastrada.',409);
           }
-          if(entity==='expenses'){item.rubric=scheduledExpenseRubric(db,data.projectId,item);if(!item.draft)assertExpense(db,data.projectId,item);}
+          if(entity==='expenses'){item.rubric=scheduledExpenseRubric(db,data.projectId,item);expenseActivity(db,data.projectId,item);if(!item.draft)assertExpense(db,data.projectId,item);}
           const before=entity==='remaps'?planBaseline(db,data.projectId):undefined;
           if(entity==='remaps')Object.assign(item,applyRemap(db,user,data.projectId,data));
           if(entity==='schedule') {
@@ -334,6 +356,7 @@ export function createApplication(db,{origin=process.env.APP_ORIGIN || 'http://l
             if(entity==='expenses')db.prepare('DELETE FROM documents WHERE expense_id=?').run(current.id);
             if(entity==='resources')db.prepare('DELETE FROM documents WHERE resource_id=?').run(current.id);
             if(entity==='remaps')undoRemap(db,user,current);
+            if(entity==='schedule')assertNoActivityExpenses(db,current.projectId,current.id);
             if(entity==='schedule')check(!rows(db,'remaps',current.projectId).some(r=>r.sourceScheduleId===current.id||r.destinationScheduleId===current.id),'Este item está vinculado a um remanejamento.');
             db.prepare(`DELETE FROM ${entity} WHERE id=?`).run(current.id);
             if(['schedule','remaps'].includes(entity))assertPlan(db,current.projectId,before);
@@ -372,15 +395,16 @@ export function createApplication(db,{origin=process.env.APP_ORIGIN || 'http://l
               // Existing allocations remain editable; changing the rubric or
               // funding source must select a current schedule allocation.
               if(next.rubric!==current.rubric||sourceOf(next)!==sourceOf(current))next.rubric=scheduledExpenseRubric(db,current.projectId,next);
+              expenseActivity(db,current.projectId,next,Boolean(current.scheduleId)||next.rubric!==current.rubric||sourceOf(next)!==sourceOf(current));
               if(!next.draft)assertExpense(db,current.projectId,next,current.id);
               // Editing a reconciled expense requires a new bank check.
               next.status=next.draft?'Pendente':'Em análise';
             } else if(data.action==='submit') {
-              check(current.draft,'A despesa já foi registrada.',409);scheduledExpenseRubric(db,current.projectId,current);assertExpense(db,current.projectId,current,current.id);next.draft=false;next.status='Em análise';
+              check(current.draft,'A despesa já foi registrada.',409);scheduledExpenseRubric(db,current.projectId,current);expenseActivity(db,current.projectId,current);assertExpense(db,current.projectId,current,current.id);next.draft=false;next.status='Em análise';
             } else {
               check(sourceOf(current)==='Subvenção','A conciliação bancária está disponível apenas para a conta de subvenção.');check(user.role==='admin','A conciliação exige administrador.',403);check(!current.draft,'Registre a despesa antes de conferir.');next.bankReference=text(data.bankReference,'Referência do extrato',200);next.status='Conciliado';
             }
-            db.prepare('UPDATE expenses SET data=?,value_cents=?,version=version+1 WHERE id=?').run(JSON.stringify(next),cents(next.value),current.id);output=record(db,entity,current.id);
+            db.prepare('UPDATE expenses SET data=?,value_cents=?,schedule_id=?,version=version+1 WHERE id=?').run(JSON.stringify(next),cents(next.value),next.scheduleId||null,current.id);output=record(db,entity,current.id);
           } else if(entity==='resources') {
             const next=validate('resources',{...current,...data});assertResource(db,current.projectId,next,current.id);
             db.prepare('UPDATE resources SET data=?,value_cents=?,installment=?,version=version+1 WHERE id=?').run(JSON.stringify(next),cents(next.value),next.installment,current.id);
@@ -396,6 +420,21 @@ export function createApplication(db,{origin=process.env.APP_ORIGIN || 'http://l
               check(Math.floor(end/12)<=2200,'Ano final fora do intervalo permitido.');
               writeSchedule(db,{...destination,activity:next.activity,month:next.month,year:next.year,endMonth:months[end%12],endYear:Math.floor(end/12)});
               db.prepare('UPDATE remaps SET data=?,version=version+1 WHERE id=?').run(JSON.stringify(next),current.id);
+            } else if(current.destinationScheduleId&&rows(db,'expenses',current.projectId).some(e=>e.scheduleId===current.destinationScheduleId)) {
+              // Keep the destination ID stable when expenses already reference it.
+              check(candidate.sourceScheduleId===current.sourceScheduleId&&candidate.to===current.to,'O destino possui lançamentos vinculados. Reatribua-os antes de alterar a origem ou a rubrica do remanejamento.');
+              check(!rows(db,'remaps',current.projectId).some(r=>r.id!==current.id&&(r.sourceScheduleId===current.destinationScheduleId||r.destinationScheduleId===current.destinationScheduleId)),'O destino foi usado em outro remanejamento. Ajuste primeiro o remanejamento posterior.');
+              const origin=record(db,'schedule',current.sourceScheduleId),destination=record(db,'schedule',current.destinationScheduleId);
+              check(cents(destination.value,'',true)===cents(current.value),'A previsão vinculada foi alterada. Revise o cronograma.');
+              const delta=cents(candidate.value)-cents(current.value),remaining=cents(origin.value,'',true)-delta;
+              check(remaining>=0,'O valor supera o item de origem.');
+              const period=schedulePeriod(destination,record(db,'projects',current.projectId).startDate),end=candidate.year*12+months.indexOf(candidate.month)+period.duration-1;
+              check(Math.floor(end/12)<=2200,'Ano final fora do intervalo permitido.');
+              writeSchedule(db,{...origin,value:remaining/100});
+              writeSchedule(db,{...destination,value:candidate.value,activity:candidate.activity,month:candidate.month,year:candidate.year,endMonth:months[end%12],endYear:Math.floor(end/12)});
+              const next={...current,...candidate,date:current.date,sourceVersion:origin.version+1};
+              db.prepare('UPDATE remaps SET data=?,value_cents=?,version=version+1 WHERE id=?').run(JSON.stringify(next),cents(next.value),current.id);
+              assertPlan(db,current.projectId,before);audit(db,user,'remap','schedule',origin.id);audit(db,user,'remap','schedule',destination.id);
             } else {
               const previousDestination=current.destinationScheduleId?record(db,'schedule',current.destinationScheduleId):undefined;
               const destinationStatus=previousDestination?.status,destinationDuration=previousDestination?schedulePeriod(previousDestination,record(db,'projects',current.projectId).startDate).duration:1;

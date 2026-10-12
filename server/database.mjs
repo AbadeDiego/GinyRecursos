@@ -73,6 +73,14 @@ export function openDatabase(path = process.env.DATABASE_PATH || './data/subvenc
         INSERT INTO migrations VALUES(4,datetime('now'));`);
     });
   }
+  if (!db.prepare('SELECT version FROM migrations WHERE version=5').get()) {
+    transaction(db,()=>{
+      // Previous expenses remain unallocated: identical rubrics may have many activities.
+      db.exec(`ALTER TABLE expenses ADD COLUMN schedule_id TEXT REFERENCES schedule(id) ON DELETE RESTRICT;
+        CREATE INDEX expenses_schedule ON expenses(schedule_id);
+        INSERT INTO migrations VALUES(5,datetime('now'));`);
+    });
+  }
   return db;
 }
 

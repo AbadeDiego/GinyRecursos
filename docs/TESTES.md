@@ -35,6 +35,9 @@ Ambiente: Node.js 24.19.0, Linux, bancos SQLite temporários. A validação HTTP
 | Órgão concedente | Campo de texto livre no cadastro e edição, persistido no projeto e no relatório, nome vazio rejeitado |
 | Períodos do cronograma | CSV/XLS/XLSX, mês único, intervalo, virada de ano, inferência pela vigência, término inválido, importação atômica, valores totais, pró-labore mensal, edição de legado, remanejamento e persistência HTTP após reinício |
 | Atrasos | Prazo final, limite de mês no fuso de Brasília, status manual e exclusão de concluídas, sem mutação do registro |
+| Atividade do lançamento | Seleção obrigatória; fonte, rubrica e projeto compatíveis; atividades da mesma rubrica independentes; centavos, rascunhos, edição, realocação, exclusão, idempotência, conflitos, anexos, relatório HTML/JSON/CSV e persistência HTTP |
+| Vínculos do cronograma | Exclusão e alteração de fonte/rubrica bloqueadas com despesas ou rascunhos; proteção do executado ao reduzir previsão/remanejar; edição de remanejamento mantém o ID do destino vinculado |
+| Migração 5 | Banco anterior, despesas e comprovantes preservados; sem vínculo presumido; realocação manual, reabertura, chaves estrangeiras e migração única |
 | Rubricas de lançamentos | Novas despesas e rascunhos exigem previsão no Cronograma do mesmo projeto e fonte; validação ao registrar rascunhos e ao trocar alocação; edição de despesas legadas preservada |
 | Cadastro editável | Nome, termo, órgão, vigência, parcelas e valores; versão, idempotência, duplicidade, perfil consulta, limites por fonte, excesso legado, preservação de anexos e persistência HTTP após reinício |
 | Recursos na Visão Geral | Edição de entradas das duas fontes pela mesma API, com totais recalculados e verificação HTTP |
@@ -46,13 +49,13 @@ Comando reprodutível:
 npm run test:all
 ```
 
-Resultado da execução em 05/10/2026: **61 testes aprovados, zero falhas**, verificação TypeScript e build concluídos.
+Resultado da execução em 12/10/2026: **68 testes aprovados, zero falhas**, verificação TypeScript e build concluídos.
 
-A suíte contém 60 testes de domínio/integração e 1 cenário HTTP de produção com múltiplas verificações. TypeScript e build fazem parte do comando. Arquivos em `tests/backend.test.mjs` e `tests/production.test.mjs`.
+A suíte contém 67 testes de domínio/integração e 1 cenário HTTP de produção com múltiplas verificações. TypeScript e build fazem parte do comando. Arquivos em `tests/backend.test.mjs` e `tests/production.test.mjs`.
 
 ## Homologação no destino
 
-Não há Docker daemon nem acesso à Hostinger/Coolify neste ambiente. O servidor standalone foi executado diretamente em Node.js. A imagem Docker e o deploy precisam ser validados no destino. O Chromium não está disponível neste ambiente; a tentativa de instalação da revisão anterior falhou no download. Não se afirma teste visual ponta a ponta das telas autenticadas nem da paginação final do PDF no navegador.
+Não há Docker daemon nem acesso à Hostinger/Coolify neste ambiente. O servidor standalone foi executado diretamente em Node.js. A imagem Docker e o deploy precisam ser validados no destino. O Chromium não está disponível neste ambiente; a tentativa de instalação desta revisão falhou porque o download retornou um arquivo inválido. Não se afirma teste visual ponta a ponta das telas autenticadas nem da paginação final do PDF no navegador.
 
 Antes do uso real:
 
@@ -67,5 +70,7 @@ Antes do uso real:
 9. Na Visão Geral, abrir Editar projeto, conferir os campos preenchidos, salvar e recarregar. Confirmar ausência de Importar CSV e Novo lançamento no cabeçalho.
 10. Confirmar o órgão concedente como campo de texto. Em Novo lançamento, conferir rubricas por fonte, sem duplicação para previsões mensais, seleção vazia ao trocar fonte e orientação quando não há previsão. Confirmar ausência de Adicionar rubrica em Lançamentos.
 11. No Cronograma, conferir o período compacto, abrir uma descrição longa, testar os filtros e o fundo vermelho claro em atividades vencidas. Conferir o novo modelo CSV, parcelas mensais e início/fim no mesmo mês.
+
+12. Criar atividades distintas na mesma rubrica/fonte. Registrar uma despesa em apenas uma e conferir os percentuais independentes. Editar o vínculo e confirmar o recálculo. Testar busca, paginação, troca de projeto e filtro de lançamentos. Vincular um lançamento antigo e conferir a preservação de seus anexos.
 
 Não foram realizados teste de carga, pentest externo ou integração bancária. A instalação atende uma organização com usuários autorizados e vários projetos. Não constitui um SaaS com organizações independentes isoladas.
