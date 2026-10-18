@@ -1,3 +1,5 @@
+import { expenseDocumentKeys } from '../lib/expense-documents.mjs';
+import { syncScheduleProgress } from './schedule-progress.mjs';
 import { activityExecution } from '../lib/activity-execution.mjs';
 import { schedulePeriod } from '../lib/schedule.mjs';
 import { readExcel, spreadsheetMime } from '../lib/spreadsheets.mjs';
@@ -10,9 +12,9 @@ import { HttpError, check, cents, text, validate, rubrics, months, integer } fro
 
 const entities = ['companies','projects','team','schedule','links','expenses','resources','budget','remaps','rubrics','projectDocuments'];
 const moneyTables = ['schedule','expenses','resources','budget','remaps'];
-const docKinds = ['invoice','payment','quote1','quote2','quote3','support','proof','project'];
+const docKinds = ['inss','invoice','payment','quote1','quote2','quote3','support','proof','project'];
 const decode = row => row ? { ...JSON.parse(row.data), ...('schedule_id' in row?{scheduleId:row.schedule_id}:{}), id:row.id, ...(row.project_id ? {projectId:row.project_id} : {}), version:row.version } : null;
-const required = () => ['invoice','payment','quote1','quote2','quote3'];
+const required = expenseDocumentKeys;
 const now = () => new Date().toISOString();
 const json = (data, status=200, headers={}) => Response.json(data, {status, headers:{'Cache-Control':'no-store','X-Content-Type-Options':'nosniff',...headers}});
 function rows(db, entity, projectId) { return db.prepare(`SELECT ${entity==='projectDocuments'?'id,project_id,data,version':'*'} FROM ${entity}${projectId ? ' WHERE project_id=?' : ''} ORDER BY rowid`).all(...(projectId ? [projectId] : [])).map(decode); }
@@ -217,7 +219,9 @@ async function payload(request) {
   return {data,files,hash:digest(JSON.stringify(data)+files.map(f=>f.kind+f.name+digest(f.bytes)).join('|'))};
 }
 function storeFiles(db,projectId,entity,id,files) {
+  const allowed=entity==='expenses'?[...required(record(db,'expenses',id)),'support']:['proof'];
   for(const file of files) {
+    check(allowed.includes(file.kind),'Documento incompatível com esta rubrica.');
     check(entity==='resources' ? file.kind==='proof' : !['proof','project'].includes(file.kind),'Documento incompatível.');
     const col=entity==='expenses' ? 'expense_id' : 'resource_id';
     check(!db.prepare(`SELECT id FROM documents WHERE ${col}=? AND kind=?`).get(id,file.kind),'Já existe um documento desta categoria.',409);
@@ -294,7 +298,7 @@ export function createApplication(db,{origin=process.env.APP_ORIGIN || 'http://l
       const result=transaction(db,()=>{
         const cached=db.prepare('SELECT * FROM requests WHERE user_id=? AND key=?').get(user.id,key);
         if(cached){check(cached.hash===requestHash,'Identificador reutilizado com outros dados.',409);return JSON.parse(cached.result);}
-        let output;
+        let output,progressProjectId=data.projectId;
         if(entity==='projectDocuments') {
           check(!path[2]&&(method==='POST'||path[1]),'Rota não encontrada.',404);
           check(files.every(f=>f.kind==='project')&&files.length<=1,'Selecione apenas um documento do projeto.');
@@ -350,7 +354,7 @@ export function createApplication(db,{origin=process.env.APP_ORIGIN || 'http://l
           if(files.length){check(['expenses','resources'].includes(entity),'Anexos não aceitos nesta operação.');storeFiles(db,data.projectId,entity,output.id,files);}
           audit(db,user,'create',entity,Array.isArray(output)?output[0].id:output.id);
         } else {
-          const current=record(db,entity,path[1]);const before=['schedule','remaps'].includes(entity)?planBaseline(db,current.projectId):undefined;check(data.version===current.version,'Este registro foi alterado. Atualize a página antes de salvar.',409);
+          const current=record(db,entity,path[1]);progressProjectId=current.projectId;const before=['schedule','remaps'].includes(entity)?planBaseline(db,current.projectId):undefined;check(data.version===current.version,'Este registro foi alterado. Atualize a página antes de salvar.',409);
           if(method==='DELETE') {
             check(['team','schedule','links','expenses','resources','remaps'].includes(entity),'Exclusão indisponível.',405);
             if(entity==='expenses')db.prepare('DELETE FROM documents WHERE expense_id=?').run(current.id);
@@ -451,10 +455,15 @@ export function createApplication(db,{origin=process.env.APP_ORIGIN || 'http://l
             if(entity==='links')next.addedAt=current.addedAt;
             if(monetary&&rows(db,'remaps',current.projectId).some(r=>r.sourceScheduleId===current.id||r.destinationScheduleId===current.id))check(next.value===current.value&&next.rubric===rubricName(current)&&sourceOf(next)===sourceOf(current),'Altere o valor, a rubrica ou a fonte pelo remanejamento vinculado.');
             if(monetary&&current.recurrenceId) {check(next.endMonth===next.month&&next.endYear===next.year,'Uma parcela mensal deve começar e terminar no mesmo mês.');}
+            if(monetary&&current.statusAutomatic)next.statusAutomatic=true;
             if(monetary&&current.recurrenceId)Object.assign(next,{recurrenceId:current.recurrenceId,installment:current.installment,installments:current.installments});
             db.prepare(`UPDATE ${entity} SET data=?,version=version+1${monetary?',value_cents=?':''} WHERE id=?`).run(JSON.stringify(next),...(monetary?[cents(next.value,'',true)]:[]),current.id);if(monetary)assertPlan(db,current.projectId,before);output=record(db,entity,current.id);
           }
           audit(db,user,method.toLowerCase(),entity,current.id,current);
+        }
+        if(['expenses','schedule','remaps'].includes(entity)&&progressProjectId) {
+          syncScheduleProgress(db,progressProjectId,(id,details)=>audit(db,user,'automatic-status','schedule',id,details));
+          if(entity==='schedule'&&method!=='DELETE')output=Array.isArray(output)?output.map(item=>record(db,'schedule',item.id)):record(db,'schedule',output.id);
         }
         db.prepare('INSERT INTO requests VALUES(?,?,?,?,?)').run(user.id,key,requestHash,JSON.stringify(output),Date.now());return output;
       });

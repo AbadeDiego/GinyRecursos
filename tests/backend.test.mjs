@@ -258,8 +258,9 @@ test('Sem anexos: registro, rascunho e conferência permitidos; checklist inform
 });
 test('Saldo executado impede reduzir previsão e remanejar depois de gastar',async()=>{
   const f=await fixture(),projectId=f.projectId;
-  const source=(await f.call('schedule','POST',{...schedule,projectId,rubric:expense.rubric,value:500})).data;
+  let source=(await f.call('schedule','POST',{...schedule,projectId,rubric:expense.rubric,value:500})).data;
   assert.equal((await postExpense(f,{...expense,projectId,value:200})).status,201);
+  source=(await f.call('state')).data.schedule.find(s=>s.id===source.id);
   assert.equal((await f.call('remaps','POST',{projectId,sourceScheduleId:source.id,to:'Bolsa',activity:'Bolsa de pesquisa',month:'Março',year:2026,value:400,reason:'Ajuste'})).status,422);
   assert.equal((await f.call('schedule/'+source.id,'PATCH',{...source,value:100})).status,422);
   assert.equal((await f.call('state')).data.schedule[0].value,500);f.db.close();
@@ -296,8 +297,9 @@ test('Fontes separadas na importação, pró-labore, limites e exclusão do cron
  const imported=await f.call('schedule/import','POST',{projectId,rows:[{...schedule,rubric:'Consultoria',source:'Subvenção',value:1000},{...schedule,rubric:'Consultoria',source:'Contrapartida',value:500}]});assert.equal(imported.status,201);
  assert.equal((await f.call('schedule','POST',{...schedule,projectId,source:'Contrapartida',value:1600})).status,422);
  const monthly=await f.call('schedule','POST',{...schedule,projectId,rubric:'Pessoal / Pró-labore',source:'Contrapartida',value:100,monthsCount:3,year:2026,month:'Dezembro'});assert.equal(monthly.status,201);assert.ok(monthly.data.every(s=>s.source==='Contrapartida'));assert.equal(monthly.data[1].year,2027);
- const counter=imported.data[1];assert.equal((await postExpense(f,{...expense,projectId,rubric:'Consultoria',source:'Contrapartida',value:400})).status,201);
- assert.equal((await f.call('schedule/'+counter.id,'DELETE',{version:1})).status,422);
+ let counter=imported.data[1];assert.equal((await postExpense(f,{...expense,projectId,rubric:'Consultoria',source:'Contrapartida',value:400})).status,201);
+ counter=(await f.call('state')).data.schedule.find(s=>s.id===counter.id);
+ assert.equal((await f.call('schedule/'+counter.id,'DELETE',{version:counter.version})).status,422);
  assert.equal((await f.call('schedule/'+counter.id,'PATCH',{...counter,source:'Subvenção'})).status,422);
  assert.equal((await postExpense(f,{...expense,projectId,rubric:'Consultoria',source:'Subvenção',value:1000})).status,201);
  assert.equal((await postExpense(f,{...expense,projectId,rubric:'Consultoria',source:'Contrapartida',value:101})).status,422);
@@ -772,8 +774,9 @@ test('Saldo é protegido por atividade em centavos, mesmo com saldo em outra ati
 test('Cronograma protege os vínculos, o valor executado e rascunhos; renomear mantém a atividade',async()=>{
  const f=await fixture(),a=await activityFixture(f),b=await activityFixture(f,{activity:'Etapa B'});
  const created=(await f.call('expenses','POST',allocatedExpense(f,a,{value:500}))).data;
+ Object.assign(a,(await f.call('state')).data.schedule.find(s=>s.id===a.id));
  for(const change of [{value:499},{rubric:'Consultoria'},{source:'Contrapartida'}])assert.equal((await f.call('schedule/'+a.id,'PATCH',{...a,...change})).status,422);
- assert.equal((await f.call('schedule/'+a.id,'DELETE',{version:1})).status,422);
+ assert.equal((await f.call('schedule/'+a.id,'DELETE',{version:a.version})).status,422);
  const changed=await f.call('schedule/'+a.id,'PATCH',{...a,activity:'Web revisado',value:600});assert.equal(changed.status,200);
  assert.equal((await f.call('state')).data.expenses[0].scheduleActivity,'Web revisado');
  assert.equal((await f.call('remaps','POST',{projectId:f.projectId,sourceScheduleId:a.id,to:a.rubric,activity:'Outra etapa',month:'Março',year:2026,value:200,reason:'Transferir saldo'})).status,422);
@@ -781,7 +784,7 @@ test('Cronograma protege os vínculos, o valor executado e rascunhos; renomear m
  assert.equal((await f.call('schedule/'+b.id,'DELETE',{version:1})).status,422);
  assert.throws(()=>f.db.prepare('DELETE FROM schedule WHERE id=?').run(b.id),/FOREIGN KEY/);
  assert.equal((await f.call('expenses/'+created.id,'PATCH',{version:1,action:'edit',scheduleId:b.id})).status,200);
- assert.equal((await f.call('schedule/'+a.id,'DELETE',{version:2})).status,200);
+ assert.equal((await f.call('schedule/'+a.id,'DELETE',{version:(await f.call('state')).data.schedule.find(s=>s.id===a.id).version})).status,200);
  assert.equal((await f.call('state')).data.expenses.find(e=>e.id===draft.id).scheduleId,b.id);f.db.close();
 });
 test('Remanejamento com destino vinculado mantém o ID e documentos ao editar valores',async()=>{
@@ -817,4 +820,68 @@ test('Execução mensal e percentuais não misturam parcelas, projetos ou rascun
  const result=activityExecution(activities,entries);assert.equal(result.activities[0].executionPercent,100);assert.equal(result.activities[0].executed,0.3);assert.equal(result.activities[1].executed,0);assert.equal(result.unallocated.count,1);assert.equal(result.unallocated.value,2);
  const monthly=[{...activities[0],id:'jan',value:500},{...activities[1],id:'fev',value:500}];const paid=[{...entries[0],scheduleId:'jan',value:250}];assert.deepEqual(activityExecution(monthly,paid).activities.map(x=>x.executionPercent),[50,0]);
  assert.equal(activityExecution(activities,[{...entries[0],projectId:'other'}]).activities[0].executed,0);
+});
+
+test('Pró-labore exige checklist de três documentos opcionais e recusa orçamentos',async()=>{
+ const f=await fixture(),a=await activityFixture(f,{rubric:'Pessoal / Pró-labore',year:2027});
+ const data=allocatedExpense(f,a),created=await f.call('expenses','POST',data);assert.equal(created.status,201);
+ let e=(await f.call('state')).data.expenses[0];assert.equal(e.requiredDocs,3);assert.equal(e.docs,0);assert.deepEqual(e.missingDocuments,['inss','invoice','payment']);
+ const html=(await f.call('reports/'+f.projectId+'?format=html')).data;assert.match(html,/Guia do INSS/);assert.match(html,/Recibo Pró-labore/);assert.doesNotMatch(html,/Orçamento 1/);
+ assert.equal((await f.call('expenses','POST',data,{files:{quote1:pdf}})).status,422);assert.equal((await f.call('state')).data.expenses.length,1);
+ assert.equal((await f.call('expenses/'+e.id+'/documents','POST',{}, {files:{quote2:pdf}})).status,422);
+ assert.equal((await f.call('expenses/'+e.id+'/documents','POST',{}, {files:{inss:'invalid'}})).status,422);
+ const key=randomUUID(),uploaded=await f.call('expenses/'+e.id+'/documents','POST',{}, {key,files:{inss:pdf,invoice:pdf,payment:pdf}});assert.equal(uploaded.status,201);
+ assert.equal((await f.call('expenses/'+e.id+'/documents','POST',{}, {key,files:{inss:pdf,invoice:pdf,payment:pdf}})).status,201);
+ e=(await f.call('state')).data.expenses[0];assert.equal(e.docs,3);assert.equal(e.documents.length,3);assert.deepEqual(e.missingDocuments,[]);
+ assert.equal((await f.call('documents/'+e.documents.find(d=>d.kind==='inss').id)).data,pdf);
+ assert.equal((await f.call('expenses/'+e.id+'/documents','POST',{}, {files:{inss:pdf}})).status,409);f.db.close();
+});
+test('Troca de rubrica preserva anexos antigos sem contar orçamentos no Pró-labore',async()=>{
+ const f=await fixture(),a=await activityFixture(f),p=await activityFixture(f,{rubric:'Pessoal / Pró-labore'});
+ const created=await f.call('expenses','POST',allocatedExpense(f,a),{files:{invoice:pdf,payment:pdf,quote1:pdf,quote2:pdf,quote3:pdf}});assert.equal(created.status,201);
+ assert.equal((await f.call('expenses/'+created.data.id+'/documents','POST',{}, {files:{inss:pdf}})).status,422);
+ assert.equal((await f.call('expenses/'+created.data.id,'PATCH',{version:1,action:'edit',rubric:p.rubric,scheduleId:p.id})).status,200);
+ let e=(await f.call('state')).data.expenses[0];assert.equal(e.documents.length,5);assert.equal(e.docs,2);assert.equal(e.requiredDocs,3);assert.deepEqual(e.missingDocuments,['inss']);
+ for(const doc of e.documents)assert.equal((await f.call('documents/'+doc.id)).data,pdf);
+ assert.equal((await f.call('expenses/'+e.id+'/documents','POST',{}, {files:{inss:pdf}})).status,201);
+ e=(await f.call('state')).data.expenses[0];assert.equal(e.docs,3);assert.equal(e.documents.length,6);f.db.close();
+});
+test('Status automático distingue atividade e fonte, ignora rascunhos e recalcula ao mover, editar e excluir',async()=>{
+ const f=await fixture(),a=await activityFixture(f,{value:100.30,year:2027}),b=await activityFixture(f,{value:100.30,year:2027,activity:'Etapa B'}),c=await activityFixture(f,{value:100.30,year:2027,source:'Contrapartida'});
+ const get=async id=>(await f.call('state')).data.schedule.find(s=>s.id===id);
+ const draft=(await f.call('expenses','POST',allocatedExpense(f,a,{value:100.30,draft:true}))).data;
+ assert.equal((await get(a.id)).status,'Não iniciada');assert.equal((await get(a.id)).version,1);
+ const key=randomUUID(),data=allocatedExpense(f,b,{value:25.10});const e=(await f.call('expenses','POST',data,{key})).data;
+ assert.equal((await get(b.id)).status,'Em andamento');assert.equal((await get(b.id)).statusAutomatic,true);const version=(await get(b.id)).version;
+ assert.equal((await f.call('expenses','POST',data,{key})).status,201);assert.equal((await get(b.id)).version,version);
+ assert.equal((await f.call('expenses/'+draft.id,'PATCH',{action:'submit',version:1})).status,200);assert.equal((await get(a.id)).status,'Concluída');assert.equal((await get(c.id)).status,'Não iniciada');
+ assert.equal((await f.call('schedule/'+a.id,'PATCH',{...a,activity:'stale'})).status,409);
+ assert.equal((await f.call('expenses/'+draft.id,'PATCH',{action:'edit',version:2,scheduleId:c.id,source:'Contrapartida'})).status,200);assert.equal((await get(a.id)).status,'Não iniciada');assert.equal((await get(c.id)).status,'Concluída');
+ assert.equal((await f.call('expenses/'+e.id,'PATCH',{action:'edit',version:1,value:100.30})).status,200);assert.equal((await get(b.id)).status,'Concluída');
+ assert.equal((await f.call('expenses/'+e.id,'DELETE',{version:2})).status,200);assert.equal((await get(b.id)).status,'Não iniciada');
+ const html=(await f.call('reports/'+f.projectId+'?format=html')).data;assert.match(html,/Concluída/);assert.ok(f.db.prepare("SELECT count(*) AS n FROM audit WHERE action='automatic-status'").get().n>=6);f.db.close();
+});
+test('Status segue previsão e remanejamento, protege conclusão automática e mantém sinalização de atraso',async()=>{
+ const f=await fixture(),a=await activityFixture(f,{value:100,year:2020});
+ await f.call('expenses','POST',allocatedExpense(f,a,{value:50}));
+ const get=async()=>(await f.call('state')).data.schedule.find(s=>s.id===a.id);
+ assert.equal(scheduleStatus(await get(),f.project.startDate,new Date('2026-10-18')),'Atrasada');
+ let current=await get();let changed=await f.call('schedule/'+a.id,'PATCH',{...current,value:50,status:'Não iniciada'});assert.equal(changed.status,200);assert.equal(changed.data.status,'Concluída');assert.equal(scheduleStatus(changed.data,f.project.startDate),'Concluída');
+ current=await get();changed=await f.call('schedule/'+a.id,'PATCH',{...current,value:100,status:'Concluída'});assert.equal(changed.status,200);assert.equal(changed.data.status,'Em andamento');
+ const remap=(await f.call('remaps','POST',{projectId:f.projectId,sourceScheduleId:a.id,to:'Consultoria',activity:'Outra etapa',month:'Março',year:2027,value:50,reason:'Transferir saldo livre'})).data;
+ assert.ok(remap.id);assert.equal((await get()).status,'Concluída');
+ assert.equal((await f.call('remaps/'+remap.id,'DELETE',{version:1})).status,200);assert.equal((await get()).status,'Em andamento');f.db.close();
+});
+test('Migração 6 atualiza atividades já executadas uma única vez e preserva valores e documentos',async()=>{
+ const f=await fixture(),a=await activityFixture(f,{rubric:'Pessoal / Pró-labore',value:100}),b=await activityFixture(f,{value:100});
+ await f.call('expenses','POST',allocatedExpense(f,a,{value:100}),{files:{inss:pdf,invoice:pdf,payment:pdf}});
+ await f.call('expenses','POST',allocatedExpense(f,b,{value:100,draft:true}));
+ f.db.exec("UPDATE schedule SET data=json_remove(json_set(data,'$.status','Não iniciada'),'$.statusAutomatic'); DELETE FROM migrations WHERE version=6");
+ const dir=mkdtempSync(join(tmpdir(),'progress-migration-')),path=join(dir,'db.sqlite');
+ try{await backup(f.db,path);f.db.close();let db=openDatabase(path);
+ const row=db.prepare('SELECT * FROM schedule WHERE id=?').get(a.id);assert.equal(JSON.parse(row.data).status,'Concluída');assert.equal(JSON.parse(row.data).statusAutomatic,true);assert.equal(row.value_cents,10000);
+ assert.equal(JSON.parse(db.prepare('SELECT data FROM schedule WHERE id=?').get(b.id).data).status,'Não iniciada');
+ assert.equal(db.prepare('SELECT count(*) AS n FROM documents').get().n,3);assert.equal(Buffer.from(db.prepare("SELECT bytes FROM documents WHERE kind='inss'").get().bytes).toString(),pdf);
+ const version=row.version;db.close();db=openDatabase(path);assert.equal(db.prepare('SELECT version FROM schedule WHERE id=?').get(a.id).version,version);assert.equal(db.prepare('SELECT count(*) AS n FROM migrations WHERE version=6').get().n,1);assert.equal(db.prepare('PRAGMA integrity_check').get().integrity_check,'ok');db.close();
+ }finally{rmSync(dir,{recursive:true,force:true});}
 });

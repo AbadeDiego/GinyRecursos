@@ -68,3 +68,7 @@ CREATE INDEX projectDocuments_project ON projectDocuments(project_id);
 -- Migration 5: explicit allocation to a schedule activity; old expenses remain NULL.
 ALTER TABLE expenses ADD COLUMN schedule_id TEXT REFERENCES schedule(id) ON DELETE RESTRICT;
 CREATE INDEX expenses_schedule ON expenses(schedule_id);
+
+-- Migration 6: no new columns. Recalculates schedule.data.status and sets
+-- statusAutomatic=true for activities with recorded, explicitly linked expenses.
+-- Runs through server/schedule-progress.mjs; keeps monetary values and documents.

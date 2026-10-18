@@ -1,5 +1,6 @@
 "use client";
 
+import { expenseDocumentLabels, expenseDocumentKeys, isProLabore } from "../lib/expense-documents.mjs";
 import { activityExecution } from "../lib/activity-execution.mjs";
 
 import { parseScheduleCsv, scheduleImportData, schedulePeriodLabel, scheduleStatus } from "../lib/schedule.mjs";
@@ -202,6 +203,7 @@ type ScheduleItem = {
   value: number;
   month: string;
   status: ScheduleStatus;
+  statusAutomatic?: boolean;
 };
 
 type CsvTeamRow = {
@@ -1094,7 +1096,6 @@ function RemapReason({reason}:{reason:string}) {
  return <div className="remap-reason"><span className="detail-label">Justificativa do remanejamento</span><p className={expanded||(reason.length<=180&&reason.split("\n").length<=3)?"":"clamped"}>{reason}</p>{(reason.length>180||reason.split("\n").length>3)&&<button className="text-button" aria-expanded={expanded} onClick={()=>setExpanded(!expanded)}>{expanded?"Recolher justificativa":"Ler justificativa completa"}<ChevronDown size={15}/></button>}</div>;
 }
 
-const expenseDocumentLabels:Record<string,string>={invoice:"Nota fiscal / recibo",payment:"Comprovante",quote1:"Orçamento 1",quote2:"Orçamento 2",quote3:"Orçamento 3"};
 function ExpenseDocuments({entries,openEntry}:{entries:Expense[];openEntry:(e:Expense)=>void}) {
  const [pendingOnly,setPendingOnly]=useState(false);
  const groups=Array.from(new Set(entries.map(e=>JSON.stringify([e.rubric,sourceOf(e)])))).map(key=>{
@@ -1102,9 +1103,9 @@ function ExpenseDocuments({entries,openEntry}:{entries:Expense[];openEntry:(e:Ex
    const list=entries.filter(e=>e.rubric===rubric&&sourceOf(e)===source),complete=list.filter(e=>e.docs===e.requiredDocs).length;
    return {key,rubric,source,list,complete};
  });
- return <section className="panel expense-document-panel"><div className="panel-header"><div><h2>Documentos por rubrica</h2><p>Nota fiscal, comprovante e três orçamentos por lançamento. Todos os anexos são opcionais.</p></div><label className="check-filter"><input type="checkbox" checked={pendingOnly} onChange={e=>setPendingOnly(e.target.checked)}/> Somente com anexos a completar</label></div>
- <div className="rubric-checklist">{groups.filter(g=>!pendingOnly||g.complete<g.list.length).map(g=><details key={g.key} className="rubric-document-group"><summary><div><strong>{g.rubric}</strong><small>{g.source} · {g.list.length} lançamento(s)</small></div><span className={g.complete===g.list.length?"checklist-status complete":"checklist-status"}>{g.complete===g.list.length?<CheckCircle2 size={17}/>:<Paperclip size={17}/>} {g.complete}/{g.list.length} com todos os anexos</span><ChevronDown size={18}/></summary><div className="rubric-document-items">{g.list.filter(e=>!pendingOnly||e.docs<e.requiredDocs).map(e=><button key={e.id} className="expense-document-row" onClick={()=>openEntry(e)}><div><strong>{e.supplier}</strong><span>{e.description}</span><small>{e.date.split("-").reverse().join("/")} · {money(e.value)}{e.draft?" · Rascunho":""}</small></div><div className="document-checks">{Object.entries(expenseDocumentLabels).map(([kind,label])=><span key={kind} className={e.documents?.some(d=>d.kind===kind)?"done":"missing"}>{e.documents?.some(d=>d.kind===kind)?<Check size={13}/>:<Clock3 size={13}/>} {label}</span>)}</div><span className="document-row-action">Ver / anexar <ChevronRight size={16}/></span></button>)}</div></details>)}</div>
- {(!groups.length||pendingOnly&&groups.every(g=>g.complete===g.list.length))&&<div className="empty-state compact"><FileCheck2 size={26}/><p>{groups.length?"Todos os lançamentos têm os cinco anexos.":"O acompanhamento aparecerá quando você cadastrar o primeiro lançamento."}</p></div>}</section>;
+ return <section className="panel expense-document-panel"><div className="panel-header"><div><h2>Documentos por rubrica</h2><p>Checklist conforme a rubrica: Pró-labore tem Guia do INSS, recibo e comprovante. Todos os anexos são opcionais.</p></div><label className="check-filter"><input type="checkbox" checked={pendingOnly} onChange={e=>setPendingOnly(e.target.checked)}/> Somente com anexos a completar</label></div>
+ <div className="rubric-checklist">{groups.filter(g=>!pendingOnly||g.complete<g.list.length).map(g=><details key={g.key} className="rubric-document-group"><summary><div><strong>{g.rubric}</strong><small>{g.source} · {g.list.length} lançamento(s)</small></div><span className={g.complete===g.list.length?"checklist-status complete":"checklist-status"}>{g.complete===g.list.length?<CheckCircle2 size={17}/>:<Paperclip size={17}/>} {g.complete}/{g.list.length} com todos os anexos</span><ChevronDown size={18}/></summary><div className="rubric-document-items">{g.list.filter(e=>!pendingOnly||e.docs<e.requiredDocs).map(e=><button key={e.id} className="expense-document-row" onClick={()=>openEntry(e)}><div><strong>{e.supplier}</strong><span>{e.description}</span><small>{e.date.split("-").reverse().join("/")} · {money(e.value)}{e.draft?" · Rascunho":""}</small></div><div className="document-checks">{Object.entries(expenseDocumentLabels(e)).map(([kind,label])=><span key={kind} className={e.documents?.some(d=>d.kind===kind)?"done":"missing"}>{e.documents?.some(d=>d.kind===kind)?<Check size={13}/>:<Clock3 size={13}/>} {label}</span>)}</div><span className="document-row-action">Ver / anexar <ChevronRight size={16}/></span></button>)}</div></details>)}</div>
+ {(!groups.length||pendingOnly&&groups.every(g=>g.complete===g.list.length))&&<div className="empty-state compact"><FileCheck2 size={26}/><p>{groups.length?"Todos os lançamentos têm os anexos do seu checklist.":"O acompanhamento aparecerá quando você cadastrar o primeiro lançamento."}</p></div>}</section>;
 }
 
 function Documents({documents,onAdd,onEdit,onDelete}:{documents:ProjectDocument[];onAdd:()=>void;onEdit:(d:ProjectDocument)=>void;onDelete:(d:ProjectDocument)=>void}) {
@@ -1270,7 +1271,7 @@ function ScheduleView({
 
       <section className="panel management-table-panel">
         <div className="panel-header management-panel-header">
-          <div><h2>Cronograma de {project.name}</h2><p>Atividades, valores e meses previstos para a execução do projeto.</p></div>
+          <div><h2>Cronograma de {project.name}</h2><p>O status é atualizado pelos lançamentos de cada atividade: execução parcial inicia; valor previsto atingido conclui.</p></div>
           <button className="secondary-button small" onClick={onImport}><FileSpreadsheet size={15} /> Importar planilha</button>
         </div>
         {items.length > 0 ? (
@@ -1294,7 +1295,7 @@ function ScheduleView({
                       <td><span className="category-pill">{sourceOf(item)}</span>{item.sourceInferred&&<small>Conferir fonte</small>}</td><td><ScheduleActivity activity={item.activity}/></td>
                       <td><strong className="schedule-value">{money(item.value)}</strong></td>
                       <td><span className="schedule-month" title={schedulePeriodLabel(item,project.startDate,false)}><CalendarDays size={14} /> {schedulePeriodLabel(item,project.startDate)}</span></td>
-                      <td><ScheduleStatusBadge status={statusOf(item)} /></td>
+                      <td><ScheduleStatusBadge status={statusOf(item)} />{item.statusAutomatic&&<small title="Calculado pelos lançamentos registrados desta atividade">Automático</small>}</td>
                       <td><button className="secondary-button small edit-row-button" onClick={() => onEdit(item)}><Pencil size={14} /> Editar</button></td>
                     </tr>
                   ))}
@@ -1729,7 +1730,7 @@ function ScheduleItemEditModal({item,project,rubrics,onAddRubric,onClose,onSave,
       <label className="field"><span>Ano inicial</span><input required type="number" min="2000" max="2200" value={year} onChange={e=>{if(endYear===year)setEndYear(Number(e.target.value));setYear(Number(e.target.value));}}/></label>
       {!item?.recurrenceId&&<><label className="field"><span>Mês final</span><select value={endMonth} onChange={e=>setEndMonth(e.target.value)}>{projectMonths.map(m=><option key={m}>{m}</option>)}</select></label><label className="field"><span>Ano final</span><input required type="number" min="2000" max="2200" value={endYear} onChange={e=>setEndYear(Number(e.target.value))}/></label></>}
       <label className="field"><span>{monthly?"Valor mensal (R$)":"Valor previsto (R$)"}</span><input required type="number" min="0" step="0.01" value={value} onChange={e=>setValue(e.target.value)}/></label>
-      <label className="field"><span>Status</span><select value={status} onChange={e=>setStatus(e.target.value as ScheduleStatus)}>{scheduleStatuses.map(s=><option key={s}>{s}</option>)}</select></label>
+      {item?.statusAutomatic?<div className="field"><span>Status automático</span><strong>{scheduleStatus(item,project.startDate)}</strong><small>Parcial: em andamento. Valor previsto atingido: concluída. Sem execução: não iniciada. Atividades vencidas continuam sinalizadas como atrasadas.</small></div>:<label className="field"><span>Status</span><select value={status} onChange={e=>setStatus(e.target.value as ScheduleStatus)}>{scheduleStatuses.map(s=><option key={s}>{s}</option>)}</select></label>}
       {(count<1||(monthly&&count>60))&&<p className="document-pending-alert full">{count<1?"O período final deve ser igual ou posterior ao inicial.":"O pró-labore permite até 60 parcelas mensais."}</p>}
       {!monthly&&!item?.recurrenceId&&<p className="panel-note full">O valor é o total da atividade durante o período. Atividades com início e fim no mesmo mês usam as mesmas datas.</p>}
 
@@ -1974,7 +1975,8 @@ function NewEntryModal({
   const [value, setValue] = useState(initial?String(initial.value):"");
   const [files, setFiles] = useState<Record<string, File>>({});
   const [date,setDate]=useState(initial?.date || new Date().toLocaleDateString("en-CA")),[taxId,setTaxId]=useState(initial?.taxId||""),[notes,setNotes]=useState(initial?.notes||"");
-  const requiredKeys = ["quote1", "quote2", "quote3", "invoice", "payment"];
+  const requiredKeys = expenseDocumentKeys({rubric});
+  const proLabore=isProLabore({rubric});
   const scheduledRubrics=Array.from(new Set(schedule.filter(item=>sourceOf(item)===source).map(item=>item.rubric||item.item)));
   const legacyRubric=initial && source===sourceOf(initial) && !scheduledRubrics.includes(initial.rubric) ? initial.rubric : "";
   const allowedRubric=scheduledRubrics.includes(rubric)||Boolean(legacyRubric && rubric===legacyRubric);
@@ -2021,7 +2023,7 @@ function NewEntryModal({
         ) : (
           <div className="modal-body">
             <div className="document-pending-alert"><AlertCircle size={18}/><span>Todos os documentos são opcionais. Você pode salvar sem anexos e acompanhar o checklist por rubrica em Lançamentos.</span></div>
-            {(
+            {!proLabore&&(
               <div className="upload-section">
                 <div className="upload-section-title"><span>Pesquisa de preços</span><b>3 orçamentos · opcionais</b></div>
                 <div className="upload-grid">{["quote1", "quote2", "quote3"].map((key, index) => <UploadBox key={key} label={"Orçamento " + String(index + 1)} file={files[key]?.name} onFile={(file) => setFile(key, file)} />)}</div>
@@ -2029,7 +2031,7 @@ function NewEntryModal({
             )}
             <div className="upload-section">
               <div className="upload-section-title"><span>Comprovação da despesa</span><b>Envio opcional</b></div>
-              <div className="upload-grid two"><UploadBox label="Nota fiscal / recibo" file={files.invoice?.name} onFile={(file) => setFile("invoice", file)} /><UploadBox label="Comprovante de pagamento" file={files.payment?.name} onFile={(file) => setFile("payment", file)} /></div>
+              <div className={proLabore?"upload-grid":"upload-grid two"}>{Object.entries(expenseDocumentLabels({rubric})).filter(([kind])=>!kind.startsWith("quote")).map(([kind,label])=><UploadBox key={kind} label={label} file={files[kind]?.name} onFile={file=>setFile(kind,file)}/>)}</div>
             </div>
             <div className="document-tip"><ShieldCheck size={18} /><span>Formatos aceitos: PDF, JPG ou PNG · tamanho máximo de 10 MB por arquivo.</span></div>
           </div>
@@ -2087,8 +2089,8 @@ function DeleteExpenseModal({expense,onClose,onConfirm}:{expense:Expense;onClose
 
 function ExpenseModal({expense,onClose,onUpload,onUpdate,admin,onEdit,onDelete}:{onEdit:(e:Expense)=>void;onDelete:(e:Expense)=>void;expense:Expense;onClose:()=>void;onUpload:(e:Expense,files:Record<string,File>)=>void;onUpdate:(e:Expense,action:string,reference?:string)=>void;admin:boolean}) {
  const [files,setFiles]=useState<Record<string,File>>({}),[reference,setReference]=useState("");
- const keys=["invoice","payment","quote1","quote2","quote3"];
- const labels:Record<string,string>={invoice:"Nota fiscal / recibo",payment:"Comprovante de pagamento",quote1:"Orçamento 1",quote2:"Orçamento 2",quote3:"Orçamento 3"};
+ const keys=expenseDocumentKeys(expense),labels=expenseDocumentLabels(expense);
+ const previousDocuments=expense.documents?.filter(d=>!keys.includes(d.kind))||[];
  const pending=Object.fromEntries(Object.entries(files).filter(([kind])=>!expense.documents?.some(d=>d.kind===kind)));
- return <div className="modal-backdrop"><section className="modal expense-modal" role="dialog" aria-modal="true" aria-label="Detalhes da despesa"><div className="modal-header"><div><span>{expense.date}</span><h2>{expense.supplier}</h2></div><button className="secondary-button" onClick={onClose}>Fechar</button></div><div className="expense-detail-hero"><strong>{money(expense.value)}</strong><StatusBadge status={expense.status}/></div><div className="modal-body"><p>{expense.description}</p><p>{expense.rubric} · {sourceOf(expense)}</p><div className="activity-allocation-summary"><strong>Atividade do Cronograma</strong><span>{expense.scheduleActivity||"Sem atividade vinculada — escolha a atividade em Editar lançamento."}</span>{expense.scheduleId&&<small>{schedulePeriodLabel({month:expense.scheduleMonth,year:expense.scheduleYear,endMonth:expense.scheduleEndMonth,endYear:expense.scheduleEndYear},undefined)}</small>}</div>{expense.notes&&<p>{expense.notes}</p>}<div className="expense-actions"><button className="secondary-button" onClick={()=>onEdit(expense)}><Pencil size={16}/> Editar lançamento</button><button className="delete-row-button" onClick={()=>onDelete(expense)}><Trash2 size={16}/> Excluir lançamento</button></div>{expense.docs<expense.requiredDocs&&<div className="document-pending-alert"><AlertCircle size={18}/><strong>Documentos pendentes: faltam {expense.requiredDocs-expense.docs} anexos.</strong></div>}<h3>Documentos do lançamento</h3><p className="panel-note">Todos os anexos são opcionais. O checklist ajuda a acompanhar a documentação.</p><div className="file-checklist">{keys.map(kind=>{const doc=expense.documents?.find(d=>d.kind===kind);return doc?<a className="complete file-document-download" key={kind} href={"/api/documents/"+doc.id}><FileCheck2 size={18}/><span><strong>{labels[kind]}</strong><small>{doc.name}</small></span><Download size={18}/></a>:<UploadBox key={kind} label={labels[kind]} file={files[kind]?.name} onFile={file=>{if(file)setFiles({...files,[kind]:file});}}/>;})}</div>{Object.keys(pending).length>0&&<button className="secondary-button" onClick={()=>onUpload(expense,pending)}>Salvar anexos selecionados</button>}{!expense.draft&&sourceOf(expense)==="Subvenção"&&admin&&expense.status!=="Conciliado"&&<label className="field"><span>Referência do extrato conferido</span><input value={reference} onChange={e=>setReference(e.target.value)} placeholder="Identificador bancário da transação"/></label>}</div><div className="modal-footer"><button className="secondary-button" onClick={onClose}>Fechar</button>{expense.draft?<button className="primary-button" onClick={()=>onUpdate(expense,"submit")}>Registrar despesa</button>:sourceOf(expense)==="Subvenção"&&admin&&expense.status!=="Conciliado"?<button className="primary-button" disabled={!reference.trim()} onClick={()=>onUpdate(expense,"reconcile",reference)}>Confirmar conferência do extrato</button>:null}</div></section></div>;
+ return <div className="modal-backdrop"><section className="modal expense-modal" role="dialog" aria-modal="true" aria-label="Detalhes da despesa"><div className="modal-header"><div><span>{expense.date}</span><h2>{expense.supplier}</h2></div><button className="secondary-button" onClick={onClose}>Fechar</button></div><div className="expense-detail-hero"><strong>{money(expense.value)}</strong><StatusBadge status={expense.status}/></div><div className="modal-body"><p>{expense.description}</p><p>{expense.rubric} · {sourceOf(expense)}</p><div className="activity-allocation-summary"><strong>Atividade do Cronograma</strong><span>{expense.scheduleActivity||"Sem atividade vinculada — escolha a atividade em Editar lançamento."}</span>{expense.scheduleId&&<small>{schedulePeriodLabel({month:expense.scheduleMonth,year:expense.scheduleYear,endMonth:expense.scheduleEndMonth,endYear:expense.scheduleEndYear},undefined)}</small>}</div>{expense.notes&&<p>{expense.notes}</p>}<div className="expense-actions"><button className="secondary-button" onClick={()=>onEdit(expense)}><Pencil size={16}/> Editar lançamento</button><button className="delete-row-button" onClick={()=>onDelete(expense)}><Trash2 size={16}/> Excluir lançamento</button></div>{expense.docs<expense.requiredDocs&&<div className="document-pending-alert"><AlertCircle size={18}/><strong>Documentos pendentes: faltam {expense.requiredDocs-expense.docs} anexos.</strong></div>}<h3>Documentos do lançamento</h3><p className="panel-note">Todos os anexos são opcionais. O checklist ajuda a acompanhar a documentação.</p><div className="file-checklist">{keys.map(kind=>{const doc=expense.documents?.find(d=>d.kind===kind);return doc?<a className="complete file-document-download" key={kind} href={"/api/documents/"+doc.id}><FileCheck2 size={18}/><span><strong>{labels[kind]}</strong><small>{doc.name}</small></span><Download size={18}/></a>:<UploadBox key={kind} label={labels[kind]} file={files[kind]?.name} onFile={file=>{if(file)setFiles({...files,[kind]:file});}}/>;})}</div>{previousDocuments.length>0&&<details className="csv-period-help"><summary>Anexos anteriores ({previousDocuments.length})</summary><p>Arquivos preservados; não entram no checklist atual.</p>{previousDocuments.map(doc=><a className="file-document-download" key={doc.id} href={"/api/documents/"+doc.id}><Download size={16}/>{doc.name}</a>)}</details>}{Object.keys(pending).length>0&&<button className="secondary-button" onClick={()=>onUpload(expense,pending)}>Salvar anexos selecionados</button>}{!expense.draft&&sourceOf(expense)==="Subvenção"&&admin&&expense.status!=="Conciliado"&&<label className="field"><span>Referência do extrato conferido</span><input value={reference} onChange={e=>setReference(e.target.value)} placeholder="Identificador bancário da transação"/></label>}</div><div className="modal-footer"><button className="secondary-button" onClick={onClose}>Fechar</button>{expense.draft?<button className="primary-button" onClick={()=>onUpdate(expense,"submit")}>Registrar despesa</button>:sourceOf(expense)==="Subvenção"&&admin&&expense.status!=="Conciliado"?<button className="primary-button" disabled={!reference.trim()} onClick={()=>onUpdate(expense,"reconcile",reference)}>Confirmar conferência do extrato</button>:null}</div></section></div>;
 }

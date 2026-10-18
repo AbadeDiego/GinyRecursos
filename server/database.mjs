@@ -1,3 +1,4 @@
+import { syncScheduleProgress } from './schedule-progress.mjs';
 import { sourceOf, budgetSource } from '../lib/funding.mjs';
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
@@ -79,6 +80,12 @@ export function openDatabase(path = process.env.DATABASE_PATH || './data/subvenc
       db.exec(`ALTER TABLE expenses ADD COLUMN schedule_id TEXT REFERENCES schedule(id) ON DELETE RESTRICT;
         CREATE INDEX expenses_schedule ON expenses(schedule_id);
         INSERT INTO migrations VALUES(5,datetime('now'));`);
+    });
+  }
+  if (!db.prepare('SELECT version FROM migrations WHERE version=6').get()) {
+    transaction(db,()=>{
+      for(const project of db.prepare('SELECT id FROM projects').all())syncScheduleProgress(db,project.id);
+      db.prepare("INSERT INTO migrations VALUES(6,datetime('now'))").run();
     });
   }
   return db;

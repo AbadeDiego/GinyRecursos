@@ -28,7 +28,9 @@ Ambiente: Node.js 24.19.0, Linux, bancos SQLite temporários. A validação HTTP
 | Relatório | Totais por fonte, extrato apenas da subvenção, isolamento entre projetos, HTML escapado e CSV |
 | Rubricas | Personalizadas, duplicidade e limites de contrapartida |
 | Planejamento legado acima do teto | Edição neutra, redução gradual, exclusão e remanejamento sem aumentar excesso; proteção de execução e rollback de reversões inválidas |
-| Checklist | Cinco anexos opcionais em todas as rubricas, três orçamentos e contagem exata; conciliação sem anexos |
+| Checklist | Pró-labore com INSS, recibo e pagamento; demais rubricas com cinco anexos opcionais; contagem e pendências por rubrica, recusa de orçamentos para Pró-labore, preservação de anexos anteriores, download e idempotência |
+| Status automático | Execução parcial/total, centavos, rascunhos, fonte e atividade independentes, realocação, exclusão, alteração da previsão e remanejamento, atraso, conflito de versão e auditoria |
+| Migração 6 | Atualiza registros já vinculados uma única vez, ignora rascunhos, preserva valores e bytes dos documentos |
 | Documentos gerais | Nome livre, upload, download, renomeação, substituição, exclusão, conflitos, idempotência, perfil consulta, autenticação e relatório |
 | Excel no cronograma | XLS/XLSX reais, acentos e multilinha, primeira aba, números formatados, fontes e pró-labore; rollback por limite, fórmulas, corrupção, abas vazias e limite de linhas |
 | Excel em documentos | XLS/XLSX, MIME, nome e bytes originais, substituição, download e rejeição de extensão falsa; preservação após backup no teste HTTP |
@@ -49,13 +51,13 @@ Comando reprodutível:
 npm run test:all
 ```
 
-Resultado da execução em 12/10/2026: **68 testes aprovados, zero falhas**, verificação TypeScript e build concluídos.
+Resultado da execução em 18/10/2026: **73 testes aprovados, zero falhas**, verificação TypeScript e build concluídos.
 
-A suíte contém 67 testes de domínio/integração e 1 cenário HTTP de produção com múltiplas verificações. TypeScript e build fazem parte do comando. Arquivos em `tests/backend.test.mjs` e `tests/production.test.mjs`.
+A suíte contém 72 testes de domínio/integração e 1 cenário HTTP de produção com múltiplas verificações. TypeScript e build fazem parte do comando. Arquivos em `tests/backend.test.mjs` e `tests/production.test.mjs`.
 
 ## Homologação no destino
 
-Não há Docker daemon nem acesso à Hostinger/Coolify neste ambiente. O servidor standalone foi executado diretamente em Node.js. A imagem Docker e o deploy precisam ser validados no destino. O Chromium não está disponível neste ambiente; a tentativa de instalação desta revisão falhou porque o download retornou um arquivo inválido. Não se afirma teste visual ponta a ponta das telas autenticadas nem da paginação final do PDF no navegador.
+Não há Docker daemon nem acesso à Hostinger/Coolify neste ambiente. O servidor standalone foi executado diretamente em Node.js. A imagem Docker e o deploy precisam ser validados no destino. A validação visual ponta a ponta não foi executada nesta revisão. Não se afirma teste visual ponta a ponta das telas autenticadas nem da paginação final do PDF no navegador.
 
 Antes do uso real:
 
@@ -72,5 +74,7 @@ Antes do uso real:
 11. No Cronograma, conferir o período compacto, abrir uma descrição longa, testar os filtros e o fundo vermelho claro em atividades vencidas. Conferir o novo modelo CSV, parcelas mensais e início/fim no mesmo mês.
 
 12. Criar atividades distintas na mesma rubrica/fonte. Registrar uma despesa em apenas uma e conferir os percentuais independentes. Editar o vínculo e confirmar o recálculo. Testar busca, paginação, troca de projeto e filtro de lançamentos. Vincular um lançamento antigo e conferir a preservação de seus anexos.
+
+13. Em Pró-labore, conferir somente os três anexos (INSS, recibo e pagamento), inclusive checklist e relatório; abrir anexos anteriores. Registrar valores parciais/totais e verificar o status automático da atividade, depois editar/excluir e conferir o recálculo.
 
 Não foram realizados teste de carga, pentest externo ou integração bancária. A instalação atende uma organização com usuários autorizados e vários projetos. Não constitui um SaaS com organizações independentes isoladas.
