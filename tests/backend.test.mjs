@@ -463,7 +463,7 @@ test('Déficit legado por rubrica permite metadados e correção sem piorar cobe
  const other=(await f.call('schedule','POST',{...schedule,projectId,source:'Contrapartida',value:2000})).data;
  assert.equal((await f.call('schedule/'+other.id,'PATCH',{...other,value:2001})).status,422);f.db.close();
 });
-test('Três orçamentos disponíveis em qualquer rubrica; cinco anexos opcionais e checklist exato',async()=>{
+test('Rubricas gerais: três orçamentos, cinco anexos opcionais e checklist exato',async()=>{
  const f=await fixture(),projectId=f.projectId;
  await f.call('schedule','POST',{...schedule,rubric:expense.rubric,projectId,value:500});
  const item=(await postExpense(f,{...expense,projectId})).data;
@@ -884,4 +884,37 @@ test('Migração 6 atualiza atividades já executadas uma única vez e preserva 
  assert.equal(db.prepare('SELECT count(*) AS n FROM documents').get().n,3);assert.equal(Buffer.from(db.prepare("SELECT bytes FROM documents WHERE kind='inss'").get().bytes).toString(),pdf);
  const version=row.version;db.close();db=openDatabase(path);assert.equal(db.prepare('SELECT version FROM schedule WHERE id=?').get(a.id).version,version);assert.equal(db.prepare('SELECT count(*) AS n FROM migrations WHERE version=6').get().n,1);assert.equal(db.prepare('PRAGMA integrity_check').get().integrity_check,'ok');db.close();
  }finally{rmSync(dir,{recursive:true,force:true});}
+});
+
+test('Diárias: dois anexos opcionais, pendências corretas e orçamentos recusados nas duas fontes',async()=>{
+ const f=await fixture();
+ for(const [rubric,source] of [['Diária','Subvenção'],['Diárias','Contrapartida']]) {
+  if(rubric==='Diárias')assert.equal((await f.call('rubrics','POST',{projectId:f.projectId,name:rubric,type:'Custeio'})).status,201);
+  const a=await activityFixture(f,{rubric,source});
+  const data=allocatedExpense(f,a),created=await f.call('expenses','POST',data);assert.equal(created.status,201);
+  let e=(await f.call('state')).data.expenses.find(e=>e.id===created.data.id);
+  assert.equal(e.requiredDocs,2);assert.equal(e.docs,0);assert.deepEqual(e.missingDocuments,['invoice','payment']);
+  const html=(await f.call('reports/'+f.projectId+'?format=html')).data;assert.match(html,/Recibo de diária/);assert.doesNotMatch(html,/Orçamento [123]/);
+  for(const kind of ['quote1','quote2','quote3','inss']) {
+   assert.equal((await f.call('expenses','POST',data,{files:{[kind]:pdf}})).status,422);
+   assert.equal((await f.call('expenses/'+e.id+'/documents','POST',{}, {files:{[kind]:pdf}})).status,422);
+  }
+  assert.equal((await f.call('expenses/'+e.id+'/documents','POST',{}, {files:{invoice:pdf}})).status,201);
+  e=(await f.call('state')).data.expenses.find(x=>x.id===e.id);assert.equal(e.docs,1);assert.deepEqual(e.missingDocuments,['payment']);
+  const key=randomUUID();for(let i=0;i<2;i++)assert.equal((await f.call('expenses/'+e.id+'/documents','POST',{}, {key,files:{payment:pdf}})).status,201);
+  e=(await f.call('state')).data.expenses.find(x=>x.id===e.id);assert.equal(e.docs,2);assert.equal(e.documents.length,2);assert.deepEqual(e.missingDocuments,[]);
+  for(const doc of e.documents)assert.equal((await f.call('documents/'+doc.id)).data,pdf);
+ }
+ assert.equal((await f.call('state')).data.expenses.length,2);f.db.close();
+});
+test('Diárias preservam orçamentos anteriores sem contá-los no checklist; outras rubricas mantêm seus anexos',async()=>{
+ const {expenseDocumentLabels,expenseDocumentKeys}=await import('../lib/expense-documents.mjs');
+ for(const rubric of ['Diária','Diárias',' DIARIAS ','diaria'])assert.deepEqual(expenseDocumentLabels({rubric}),{invoice:'Recibo de diária',payment:'Comprovante de pagamento'});
+ assert.equal(expenseDocumentKeys({rubric:'Pessoal / Pró-labore'}).length,3);assert.equal(expenseDocumentKeys({rubric:'Serviços de Terceiros - PJ'}).length,5);
+ const f=await fixture(),a=await activityFixture(f),d=await activityFixture(f,{rubric:'Diária'});
+ const e=(await f.call('expenses','POST',allocatedExpense(f,a),{files:{invoice:pdf,payment:pdf,quote1:pdf,quote2:pdf,quote3:pdf}})).data;
+ assert.equal((await f.call('expenses/'+e.id,'PATCH',{version:1,action:'edit',rubric:d.rubric,scheduleId:d.id})).status,200);
+ const changed=(await f.call('state')).data.expenses[0];assert.equal(changed.requiredDocs,2);assert.equal(changed.docs,2);assert.equal(changed.documents.length,5);assert.deepEqual(changed.missingDocuments,[]);
+ for(const doc of changed.documents)assert.equal((await f.call('documents/'+doc.id)).data,pdf);
+ const csv=(await f.call('reports/'+f.projectId)).data;assert.match(csv,/2\/2/);f.db.close();
 });

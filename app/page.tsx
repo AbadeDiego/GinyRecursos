@@ -1,6 +1,6 @@
 "use client";
 
-import { expenseDocumentLabels, expenseDocumentKeys, isProLabore } from "../lib/expense-documents.mjs";
+import { expenseDocumentLabels, expenseDocumentKeys } from "../lib/expense-documents.mjs";
 import { activityExecution } from "../lib/activity-execution.mjs";
 
 import { parseScheduleCsv, scheduleImportData, schedulePeriodLabel, scheduleStatus } from "../lib/schedule.mjs";
@@ -1103,7 +1103,7 @@ function ExpenseDocuments({entries,openEntry}:{entries:Expense[];openEntry:(e:Ex
    const list=entries.filter(e=>e.rubric===rubric&&sourceOf(e)===source),complete=list.filter(e=>e.docs===e.requiredDocs).length;
    return {key,rubric,source,list,complete};
  });
- return <section className="panel expense-document-panel"><div className="panel-header"><div><h2>Documentos por rubrica</h2><p>Checklist conforme a rubrica: Pró-labore tem Guia do INSS, recibo e comprovante. Todos os anexos são opcionais.</p></div><label className="check-filter"><input type="checkbox" checked={pendingOnly} onChange={e=>setPendingOnly(e.target.checked)}/> Somente com anexos a completar</label></div>
+ return <section className="panel expense-document-panel"><div className="panel-header"><div><h2>Documentos por rubrica</h2><p>Documentos conforme a rubrica. Diárias: recibo e comprovante. Pró-labore: Guia do INSS, recibo e comprovante. Todos os anexos são opcionais.</p></div><label className="check-filter"><input type="checkbox" checked={pendingOnly} onChange={e=>setPendingOnly(e.target.checked)}/> Somente com anexos a completar</label></div>
  <div className="rubric-checklist">{groups.filter(g=>!pendingOnly||g.complete<g.list.length).map(g=><details key={g.key} className="rubric-document-group"><summary><div><strong>{g.rubric}</strong><small>{g.source} · {g.list.length} lançamento(s)</small></div><span className={g.complete===g.list.length?"checklist-status complete":"checklist-status"}>{g.complete===g.list.length?<CheckCircle2 size={17}/>:<Paperclip size={17}/>} {g.complete}/{g.list.length} com todos os anexos</span><ChevronDown size={18}/></summary><div className="rubric-document-items">{g.list.filter(e=>!pendingOnly||e.docs<e.requiredDocs).map(e=><button key={e.id} className="expense-document-row" onClick={()=>openEntry(e)}><div><strong>{e.supplier}</strong><span>{e.description}</span><small>{e.date.split("-").reverse().join("/")} · {money(e.value)}{e.draft?" · Rascunho":""}</small></div><div className="document-checks">{Object.entries(expenseDocumentLabels(e)).map(([kind,label])=><span key={kind} className={e.documents?.some(d=>d.kind===kind)?"done":"missing"}>{e.documents?.some(d=>d.kind===kind)?<Check size={13}/>:<Clock3 size={13}/>} {label}</span>)}</div><span className="document-row-action">Ver / anexar <ChevronRight size={16}/></span></button>)}</div></details>)}</div>
  {(!groups.length||pendingOnly&&groups.every(g=>g.complete===g.list.length))&&<div className="empty-state compact"><FileCheck2 size={26}/><p>{groups.length?"Todos os lançamentos têm os anexos do seu checklist.":"O acompanhamento aparecerá quando você cadastrar o primeiro lançamento."}</p></div>}</section>;
 }
@@ -1976,7 +1976,7 @@ function NewEntryModal({
   const [files, setFiles] = useState<Record<string, File>>({});
   const [date,setDate]=useState(initial?.date || new Date().toLocaleDateString("en-CA")),[taxId,setTaxId]=useState(initial?.taxId||""),[notes,setNotes]=useState(initial?.notes||"");
   const requiredKeys = expenseDocumentKeys({rubric});
-  const proLabore=isProLabore({rubric});
+  const hasQuotes=requiredKeys.some(kind=>kind.startsWith("quote"));
   const scheduledRubrics=Array.from(new Set(schedule.filter(item=>sourceOf(item)===source).map(item=>item.rubric||item.item)));
   const legacyRubric=initial && source===sourceOf(initial) && !scheduledRubrics.includes(initial.rubric) ? initial.rubric : "";
   const allowedRubric=scheduledRubrics.includes(rubric)||Boolean(legacyRubric && rubric===legacyRubric);
@@ -2023,7 +2023,7 @@ function NewEntryModal({
         ) : (
           <div className="modal-body">
             <div className="document-pending-alert"><AlertCircle size={18}/><span>Todos os documentos são opcionais. Você pode salvar sem anexos e acompanhar o checklist por rubrica em Lançamentos.</span></div>
-            {!proLabore&&(
+            {hasQuotes&&(
               <div className="upload-section">
                 <div className="upload-section-title"><span>Pesquisa de preços</span><b>3 orçamentos · opcionais</b></div>
                 <div className="upload-grid">{["quote1", "quote2", "quote3"].map((key, index) => <UploadBox key={key} label={"Orçamento " + String(index + 1)} file={files[key]?.name} onFile={(file) => setFile(key, file)} />)}</div>
@@ -2031,7 +2031,7 @@ function NewEntryModal({
             )}
             <div className="upload-section">
               <div className="upload-section-title"><span>Comprovação da despesa</span><b>Envio opcional</b></div>
-              <div className={proLabore?"upload-grid":"upload-grid two"}>{Object.entries(expenseDocumentLabels({rubric})).filter(([kind])=>!kind.startsWith("quote")).map(([kind,label])=><UploadBox key={kind} label={label} file={files[kind]?.name} onFile={file=>setFile(kind,file)}/>)}</div>
+              <div className={requiredKeys.filter(kind=>!kind.startsWith("quote")).length>2?"upload-grid":"upload-grid two"}>{Object.entries(expenseDocumentLabels({rubric})).filter(([kind])=>!kind.startsWith("quote")).map(([kind,label])=><UploadBox key={kind} label={label} file={files[kind]?.name} onFile={file=>setFile(kind,file)}/>)}</div>
             </div>
             <div className="document-tip"><ShieldCheck size={18} /><span>Formatos aceitos: PDF, JPG ou PNG · tamanho máximo de 10 MB por arquivo.</span></div>
           </div>

@@ -28,7 +28,7 @@ Ambiente: Node.js 24.19.0, Linux, bancos SQLite temporários. A validação HTTP
 | Relatório | Totais por fonte, extrato apenas da subvenção, isolamento entre projetos, HTML escapado e CSV |
 | Rubricas | Personalizadas, duplicidade e limites de contrapartida |
 | Planejamento legado acima do teto | Edição neutra, redução gradual, exclusão e remanejamento sem aumentar excesso; proteção de execução e rollback de reversões inválidas |
-| Checklist | Pró-labore com INSS, recibo e pagamento; demais rubricas com cinco anexos opcionais; contagem e pendências por rubrica, recusa de orçamentos para Pró-labore, preservação de anexos anteriores, download e idempotência |
+| Checklist | Diárias com recibo e pagamento; Pró-labore com INSS, recibo e pagamento; demais rubricas com cinco anexos opcionais; contagem e pendências por rubrica, recusa de orçamentos para Diárias e Pró-labore, preservação de anexos anteriores, download e idempotência |
 | Status automático | Execução parcial/total, centavos, rascunhos, fonte e atividade independentes, realocação, exclusão, alteração da previsão e remanejamento, atraso, conflito de versão e auditoria |
 | Migração 6 | Atualiza registros já vinculados uma única vez, ignora rascunhos, preserva valores e bytes dos documentos |
 | Documentos gerais | Nome livre, upload, download, renomeação, substituição, exclusão, conflitos, idempotência, perfil consulta, autenticação e relatório |
@@ -51,9 +51,9 @@ Comando reprodutível:
 npm run test:all
 ```
 
-Resultado da execução em 18/10/2026: **73 testes aprovados, zero falhas**, verificação TypeScript e build concluídos.
+Resultado da execução em 21/10/2026: **75 testes aprovados, zero falhas**, verificação TypeScript e build concluídos.
 
-A suíte contém 72 testes de domínio/integração e 1 cenário HTTP de produção com múltiplas verificações. TypeScript e build fazem parte do comando. Arquivos em `tests/backend.test.mjs` e `tests/production.test.mjs`.
+A suíte contém 74 testes de domínio/integração e 1 cenário HTTP de produção com múltiplas verificações. TypeScript e build fazem parte do comando. Arquivos em `tests/backend.test.mjs` e `tests/production.test.mjs`.
 
 ## Homologação no destino
 
@@ -76,5 +76,7 @@ Antes do uso real:
 12. Criar atividades distintas na mesma rubrica/fonte. Registrar uma despesa em apenas uma e conferir os percentuais independentes. Editar o vínculo e confirmar o recálculo. Testar busca, paginação, troca de projeto e filtro de lançamentos. Vincular um lançamento antigo e conferir a preservação de seus anexos.
 
 13. Em Pró-labore, conferir somente os três anexos (INSS, recibo e pagamento), inclusive checklist e relatório; abrir anexos anteriores. Registrar valores parciais/totais e verificar o status automático da atividade, depois editar/excluir e conferir o recálculo.
+
+14. Em Diária/Diárias, conferir apenas Recibo de diária e Comprovante de pagamento no cadastro e detalhes, ambos opcionais. Conferir checklist 0/2, 1/2 e 2/2, pendências no relatório e download dos anexos anteriores.
 
 Não foram realizados teste de carga, pentest externo ou integração bancária. A instalação atende uma organização com usuários autorizados e vários projetos. Não constitui um SaaS com organizações independentes isoladas.
