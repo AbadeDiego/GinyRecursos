@@ -972,3 +972,61 @@ test('Reclassificação de uma parcela mantém recorrência e checklist sem alte
  const after=(await f.call('state')).data;assert.deepEqual(after.schedule.find(x=>x.id===monthly[1].id),before.schedule.find(x=>x.id===monthly[1].id));
  const updated=after.expenses.find(x=>x.id===e.id);assert.equal(updated.docs,2);assert.equal(updated.requiredDocs,2);assert.equal(updated.documents.length,3);assert.equal(after.projects[0].executed,300);f.db.close();
 });
+
+test('Editar lançamento substitui arquivo no mesmo link, adiciona pendência e preserva demais anexos e totais',async()=>{
+ const f=await fixture(),a=await activityFixture(f);
+ const e=(await f.call('expenses','POST',allocatedExpense(f,a),{files:{invoice:pdf,payment:pdf}})).data;
+ let state=(await f.call('state')).data,original=state.expenses[0],invoice=original.documents.find(d=>d.kind==='invoice'),payment=original.documents.find(d=>d.kind==='payment');
+ assert.equal((await f.call('expenses/'+e.id,'PATCH',{action:'reconcile',version:1,bankReference:'extrato-1'})).status,200);
+ const png=Buffer.from([137,80,78,71,13,10,26,10,0,1,2,3]);
+ const edited=await f.call('expenses/'+e.id,'PATCH',{action:'edit',version:2,description:'Documento corrigido'},{files:{invoice:png,quote1:pdf},fileNames:{invoice:'nota-corrigida.png'}});assert.equal(edited.status,200);
+ state=(await f.call('state')).data;const current=state.expenses[0],doc=current.documents.find(d=>d.kind==='invoice');
+ assert.equal(current.version,3);assert.equal(current.description,'Documento corrigido');assert.equal(current.status,'Em análise');assert.equal(current.docs,3);assert.equal(current.documents.length,3);assert.equal(state.projects[0].executed,100);
+ assert.equal(doc.id,invoice.id);assert.equal(doc.name,'nota-corrigida.png');assert.equal(doc.mime,'image/png');assert.equal(doc.size,png.length);
+ const download=await f.app(new Request(origin+'/api/documents/'+doc.id,{headers:{cookie:f.cookie}}));assert.equal(download.headers.get('content-type'),'image/png');assert.match(download.headers.get('content-disposition'),/nota-corrigida.png/);assert.deepEqual(Buffer.from(await download.arrayBuffer()),png);
+ assert.equal((await f.call('documents/'+payment.id)).data,pdf);assert.equal(current.documents.find(d=>d.kind==='payment').id,payment.id);
+ const audit=JSON.parse(f.db.prepare("SELECT details FROM audit WHERE action='replace-document' AND entity_id=?").get(doc.id).details);assert.equal(audit.expenseId,e.id);assert.equal(audit.previous.name,invoice.name);assert.equal(audit.name,doc.name);assert.equal(audit.previous.bytes,undefined);
+ assert.equal(f.db.prepare("SELECT count(*) AS n FROM audit WHERE action='upload' AND entity='documents'").get().n,1);f.db.close();
+});
+
+test('Substituição de anexos respeita versão, idempotência, escopo e ação de edição',async()=>{
+ const f=await fixture(),a=await activityFixture(f),e=(await f.call('expenses','POST',allocatedExpense(f,a),{files:{invoice:pdf}})).data;
+ const other=(await f.call('expenses','POST',allocatedExpense(f,a),{files:{invoice:pdf}})).data;
+ const input={action:'edit',version:1},key=randomUUID(),replacement=pdf+'\n% atualizado',options={key,files:{invoice:replacement}};
+ assert.equal((await f.call('expenses/'+e.id,'PATCH',input,options)).status,200);assert.equal((await f.call('expenses/'+e.id,'PATCH',input,options)).status,200);
+ assert.equal((await f.call('expenses/'+e.id,'PATCH',input,{key,files:{invoice:pdf}})).status,409);
+ assert.equal((await f.call('expenses/'+e.id,'PATCH',input,{files:{invoice:pdf}})).status,409);
+ assert.equal((await f.call('expenses/'+e.id+'/documents','POST',{}, {files:{invoice:pdf}})).status,409);
+ assert.equal((await f.call('expenses/'+e.id,'PATCH',{action:'reconcile',version:2,bankReference:'ref'},{files:{invoice:pdf}})).status,422);
+ const state=(await f.call('state')).data,current=state.expenses.find(x=>x.id===e.id),untouched=state.expenses.find(x=>x.id===other.id);
+ assert.equal(current.version,2);assert.equal((await f.call('documents/'+current.documents[0].id)).data,replacement);assert.equal((await f.call('documents/'+untouched.documents[0].id)).data,pdf);
+ assert.equal(f.db.prepare("SELECT count(*) AS n FROM audit WHERE action='replace-document'").get().n,1);f.db.close();
+});
+
+test('Falhas no segundo anexo, arquivo inválido, tamanho, saldo e permissão revertem toda a edição',async()=>{
+ const f=await fixture(),a=await activityFixture(f),e=(await f.call('expenses','POST',allocatedExpense(f,a),{files:{invoice:pdf}})).data;
+ const before=(await f.call('state')).data.expenses[0],auditCount=f.db.prepare('SELECT count(*) AS n FROM audit').get().n;
+ const input={action:'edit',version:1,description:'Não deve persistir'};
+ const cases=[{files:{invoice:pdf+'\n% novo',inss:pdf}},{files:{invoice:'inválido'}},{files:{invoice:Buffer.concat([Buffer.from(pdf),Buffer.alloc(10*1024*1024)])}}];
+ for(const options of cases)assert.equal((await f.call('expenses/'+e.id,'PATCH',input,options)).status,422);
+ assert.equal((await f.call('expenses/'+e.id,'PATCH',{...input,value:1500},{files:{invoice:pdf+'\n% novo'}})).status,422);
+ assert.equal(f.db.prepare('SELECT count(*) AS n FROM audit').get().n,auditCount);
+ createUser(f.db,{name:'Consulta',email:'viewer@test.example',password:admin.password,role:'viewer'});
+ const login=await f.call('auth/login','POST',{email:'viewer@test.example',password:admin.password});const cookie=login.response.headers.get('set-cookie').split(';')[0];
+ assert.equal((await f.call('expenses/'+e.id,'PATCH',input,{headers:{cookie},files:{invoice:pdf+'\n% novo'}})).status,403);
+ assert.deepEqual((await f.call('state')).data.expenses[0],before);assert.equal((await f.call('documents/'+before.documents[0].id)).data,pdf);
+ assert.equal(f.db.prepare("SELECT count(*) AS n FROM audit WHERE action='replace-document'").get().n,0);f.db.close();
+});
+
+test('Edição de documentos segue checklist da nova rubrica e preserva rascunho e anexos anteriores',async()=>{
+ const f=await fixture(),a=await activityFixture(f),p=await activityFixture(f,{rubric:'Pessoal / Pró-labore'}),d=await activityFixture(f,{rubric:'Diária'});
+ const e=(await f.call('expenses','POST',allocatedExpense(f,a,{draft:true}),{files:{invoice:pdf,payment:pdf,quote1:pdf}})).data;
+ const replacement=pdf+'\n% recibo revisado';
+ assert.equal((await f.call('expenses/'+e.id,'PATCH',{action:'edit',version:1,rubric:p.rubric,scheduleId:p.id},{files:{invoice:replacement,inss:pdf}})).status,200);
+ let state=(await f.call('state')).data,current=state.expenses[0];assert.equal(current.draft,true);assert.equal(current.status,'Pendente');assert.equal(current.docs,3);assert.equal(current.requiredDocs,3);assert.equal(current.documents.length,4);assert.equal(state.projects[0].executed,0);
+ assert.equal((await f.call('expenses/'+e.id,'PATCH',{action:'edit',version:2,rubric:d.rubric,scheduleId:d.id},{files:{invoice:pdf,payment:replacement}})).status,200);
+ current=(await f.call('state')).data.expenses[0];assert.equal(current.docs,2);assert.equal(current.requiredDocs,2);assert.equal(current.documents.length,4);assert.equal(current.version,3);
+ assert.equal((await f.call('documents/'+current.documents.find(x=>x.kind==='payment').id)).data,replacement);
+ assert.equal((await f.call('documents/'+current.documents.find(x=>x.kind==='quote1').id)).data,pdf);
+ assert.equal((await f.call('expenses/'+e.id,'PATCH',{action:'edit',version:3},{files:{quote1:replacement}})).status,422);f.db.close();
+});

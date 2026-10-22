@@ -29,6 +29,7 @@ Ambiente: Node.js 24.19.0, Linux, bancos SQLite temporários. A validação HTTP
 | Rubricas | Personalizadas, duplicidade e limites de contrapartida |
 | Reclassificação pelo Cronograma | Atualização atômica da previsão, despesas e rascunhos vinculados; preservação de IDs, valores, fonte, conciliação, anexos e recorrência; checklist e percentuais recalculados; isolamento por atividade/projeto, rollback, auditoria, idempotência, conflitos e persistência após backup/restauração HTTP |
 | Planejamento legado acima do teto | Edição neutra, redução gradual, exclusão e remanejamento sem aumentar excesso; proteção de execução e rollback de reversões inválidas |
+| Substituição no lançamento | PATCH multipart com dados e anexos atômicos; mesmo ID/link, nome/MIME/bytes atualizados, preservação de outros anexos, checklist e rascunho, conciliação, auditoria, versão, idempotência, permissões, rollback e persistência no servidor HTTP após reinício e backup/restauração |
 | Checklist | Diárias com recibo e pagamento; Pró-labore com INSS, recibo e pagamento; demais rubricas com cinco anexos opcionais; contagem e pendências por rubrica, recusa de orçamentos para Diárias e Pró-labore, preservação de anexos anteriores, download e idempotência |
 | Status automático | Execução parcial/total, centavos, rascunhos, fonte e atividade independentes, realocação, exclusão, alteração da previsão e remanejamento, atraso, conflito de versão e auditoria |
 | Migração 6 | Atualiza registros já vinculados uma única vez, ignora rascunhos, preserva valores e bytes dos documentos |
@@ -52,9 +53,9 @@ Comando reprodutível:
 npm run test:all
 ```
 
-Resultado da execução em 22/10/2026: **79 testes aprovados, zero falhas**, verificação TypeScript e build concluídos.
+Resultado da execução em 22/10/2026: **83 testes aprovados, zero falhas**, verificação TypeScript e build concluídos.
 
-A suíte contém 78 testes de domínio/integração e 1 cenário HTTP de produção com múltiplas verificações. TypeScript e build fazem parte do comando. Arquivos em `tests/backend.test.mjs` e `tests/production.test.mjs`.
+A suíte contém 82 testes de domínio/integração e 1 cenário HTTP de produção com múltiplas verificações. TypeScript e build fazem parte do comando. Arquivos em `tests/backend.test.mjs` e `tests/production.test.mjs`.
 
 ## Homologação no destino
 
@@ -81,5 +82,7 @@ Antes do uso real:
 14. Em Diária/Diárias, conferir apenas Recibo de diária e Comprovante de pagamento no cadastro e detalhes, ambos opcionais. Conferir checklist 0/2, 1/2 e 2/2, pendências no relatório e download dos anexos anteriores.
 
 15. Editar a rubrica de uma previsão com lançamentos vinculados: conferir o aviso com a quantidade, salvar, abrir os lançamentos, validar a nova rubrica e os mesmos comprovantes. Conferir a fonte preservada e as pendências conforme o novo checklist.
+
+16. Abrir Editar lançamento → Editar documentos. Baixar o arquivo atual, selecionar outro, cancelar a seleção e conferir que nada mudou. Selecionar novamente e salvar; conferir o novo download e os demais anexos preservados. Repetir com Pró-labore e Diárias e preencher uma posição ainda vazia.
 
 Não foram realizados teste de carga, pentest externo ou integração bancária. A instalação atende uma organização com usuários autorizados e vários projetos. Não constitui um SaaS com organizações independentes isoladas.

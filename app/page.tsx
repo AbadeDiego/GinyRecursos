@@ -470,7 +470,7 @@ function Workspace({initial,onLogout}: {initial: State;onLogout:()=>void}) {
   const saveScheduleItem=(updated:ScheduleItem)=>commit(()=>api("schedule/"+updated.id,"PATCH",updated),()=>setEditingScheduleItem(null),"Cronograma atualizado.");
   const createScheduleItem=(draft:ScheduleItem)=>commit(()=>api("schedule","POST",{...draft,projectId:activeProject.id}),()=>setScheduleCreateOpen(false),"Previsões adicionadas ao cronograma.");
   const createRubric=(draft:RubricOption)=>commit(()=>api("rubrics","POST",{...draft,projectId:activeProject.id}),()=>setRubricCreateOpen(false),"Rubrica cadastrada. Planeje o valor no cronograma para utilizá-la.");
-  const editExpense=(draft:ExpenseDraft)=>commit(()=>api("expenses/"+editingExpense!.id,"PATCH",{...draft,action:"edit",version:editingExpense!.version}),()=>{setEditingExpense(null);setSelectedExpense(null);},"Lançamento atualizado.");
+  const editExpense=(draft:ExpenseDraft,_draft:boolean,files:Record<string,File>)=>commit(()=>api("expenses/"+editingExpense!.id,"PATCH",{...draft,action:"edit",version:editingExpense!.version},files),()=>{setEditingExpense(null);setSelectedExpense(null);},"Lançamento atualizado.");
   const deleteExpense=(expense:Expense)=>commit(()=>api("expenses/"+expense.id,"DELETE",{version:expense.version}),()=>{setDeletingExpense(null);setSelectedExpense(null);},"Lançamento excluído e saldos atualizados.");
   const saveRemap=(draft:RemapDraft)=>commit(()=>api(editingRemap?"remaps/"+editingRemap.id:"remaps",editingRemap?"PATCH":"POST",{...draft,projectId:activeProject.id,...(editingRemap?{version:editingRemap.version}:{})}),()=>{setRemapOpen(false);setEditingRemap(null);},"Remanejamento aplicado e cronograma atualizado.");
   const editResourceEntry=(entry:ResourceEntryDraft)=>{const {proof,...data}=entry;return commit(()=>api("resources/"+editingResource!.id,"PATCH",{...data,version:editingResource!.version},proof?{proof}:undefined),()=>setEditingResource(null),"Recurso atualizado.");};
@@ -1989,6 +1989,8 @@ function NewEntryModal({
   const setFile = (key: string, file?: File) => {
     if (file) setFiles((current) => ({ ...current, [key]: file }));
   };
+  const renderAttachment=(kind:string,label:string)=>initial?<ExpenseAttachmentEditor key={kind} label={label} document={initial.documents?.find(d=>d.kind===kind)} file={files[kind]} onFile={file=>setFile(kind,file)} onClear={()=>setFiles(current=>{const next={...current};delete next[kind];return next;})}/>:<UploadBox key={kind} label={label} file={files[kind]?.name} onFile={file=>setFile(kind,file)}/>;
+  const previousDocuments=initial?.documents?.filter(d=>!requiredKeys.includes(d.kind))||[];
   const save = (draft: boolean) => {
     if (!firstStepComplete) {
       showToast("Preencha os dados básicos antes de salvar.");
@@ -2023,17 +2025,18 @@ function NewEntryModal({
           </div>
         ) : (
           <div className="modal-body">
-            <div className="document-pending-alert"><AlertCircle size={18}/><span>Todos os documentos são opcionais. Você pode salvar sem anexos e acompanhar o checklist por rubrica em Lançamentos.</span></div>
+            <div className="document-pending-alert"><AlertCircle size={18}/><span>{initial?"Selecione um novo arquivo para substituir o atual. A substituição será aplicada ao salvar as alterações. Os demais arquivos serão mantidos.":"Todos os documentos são opcionais. Você pode salvar sem anexos e acompanhar o checklist por rubrica em Lançamentos."}</span></div>
             {hasQuotes&&(
               <div className="upload-section">
                 <div className="upload-section-title"><span>Pesquisa de preços</span><b>3 orçamentos · opcionais</b></div>
-                <div className="upload-grid">{["quote1", "quote2", "quote3"].map((key, index) => <UploadBox key={key} label={"Orçamento " + String(index + 1)} file={files[key]?.name} onFile={(file) => setFile(key, file)} />)}</div>
+                <div className="upload-grid">{["quote1", "quote2", "quote3"].map((key,index)=>renderAttachment(key,"Orçamento "+String(index+1)))}</div>
               </div>
             )}
             <div className="upload-section">
               <div className="upload-section-title"><span>Comprovação da despesa</span><b>Envio opcional</b></div>
-              <div className={requiredKeys.filter(kind=>!kind.startsWith("quote")).length>2?"upload-grid":"upload-grid two"}>{Object.entries(expenseDocumentLabels({rubric})).filter(([kind])=>!kind.startsWith("quote")).map(([kind,label])=><UploadBox key={kind} label={label} file={files[kind]?.name} onFile={file=>setFile(kind,file)}/>)}</div>
+              <div className={requiredKeys.filter(kind=>!kind.startsWith("quote")).length>2?"upload-grid":"upload-grid two"}>{Object.entries(expenseDocumentLabels({rubric})).filter(([kind])=>!kind.startsWith("quote")).map(([kind,label])=>renderAttachment(kind,label))}</div>
             </div>
+            {previousDocuments.length>0&&<details className="csv-period-help"><summary>Anexos anteriores ({previousDocuments.length})</summary><p>Arquivos preservados fora do checklist desta rubrica.</p>{previousDocuments.map(doc=><a className="file-document-download" key={doc.id} href={"/api/documents/"+doc.id}><Download size={16}/>{doc.name}</a>)}</details>}
             <div className="document-tip"><ShieldCheck size={18} /><span>Formatos aceitos: PDF, JPG ou PNG · tamanho máximo de 10 MB por arquivo.</span></div>
           </div>
         )}
@@ -2041,12 +2044,17 @@ function NewEntryModal({
           <button className="secondary-button" onClick={() => step === 1 ? onClose() : setStep(1)}>{step === 1 ? "Cancelar" : "Voltar"}</button>
           <div>
             {!initial&&<button className="text-button draft-button" disabled={!firstStepComplete} onClick={() => save(true)}>Salvar rascunho</button>}
+            {initial&&step===1&&<button className="secondary-button" onClick={()=>setStep(2)}><Paperclip size={17}/> Editar documentos</button>}
             {initial ? <button className="primary-button" disabled={!firstStepComplete} onClick={()=>save(Boolean(initial.draft))}>Salvar alterações</button> : step === 1 ? <button className="primary-button" disabled={!firstStepComplete} onClick={() => setStep(2)}>Continuar <ArrowRight size={17} /></button> : <button className="primary-button" disabled={!firstStepComplete} onClick={() => save(false)}><Check size={17} /> Registrar despesa</button>}
           </div>
         </div>
       </div>
     </div>
   );
+}
+
+function ExpenseAttachmentEditor({label,document,file,onFile,onClear}:{label:string;document?:DocumentFile;file?:File;onFile:(file?:File)=>void;onClear:()=>void}) {
+ return <div className="expense-attachment-editor"><strong>{label}</strong>{document?<a className="attachment-current" href={"/api/documents/"+document.id}><Download size={16}/><span>Arquivo atual: {document.name}</span></a>:<small>Documento ainda não enviado · opcional</small>}<label className="upload-inline"><input type="file" accept=".pdf,.jpg,.jpeg,.png" aria-label={(document?"Substituir ":"Anexar ")+label} onChange={e=>{onFile(e.target.files?.[0]);e.target.value="";}}/><Paperclip size={19}/><span><strong>{document?"Substituir arquivo":"Anexar arquivo"}</strong><small>{file?.name||"Selecionar PDF, JPG ou PNG"}</small></span></label>{file&&<div className="attachment-pending"><small>{document?"Substituição pendente":"Envio pendente"} · será aplicado ao salvar</small><button type="button" className="text-button" onClick={onClear}>Cancelar seleção</button></div>}</div>;
 }
 
 function UploadBox({ label, file, onFile, accept=".pdf,.jpg,.jpeg,.png" }: { label: string; file?: string; onFile: (file?: File) => void; accept?:string }) {

@@ -6109,3 +6109,12 @@ h1, h2, h3 { letter-spacing: -.025em; }
 .expense-activity-label { max-width: 290px; white-space: normal; overflow-wrap: anywhere; }
 .entries-activity-filter { max-width: 700px; margin-bottom: 18px; }
 @media(max-width: 700px) { .activity-execution-filters { grid-template-columns: 1fr; } .activity-unallocated { flex-wrap: wrap; } .activity-execution-pagination { flex-wrap: wrap; } }
+
+.expense-attachment-editor { min-width: 0; display: flex; flex-direction: column; gap: 12px; padding: 16px; border: 1px solid #dbe5df; border-radius: 12px; background: #fff; }
+.expense-attachment-editor > strong { font-size: 15px; }
+.expense-attachment-editor small { color: #59655f; line-height: 1.5; }
+.expense-attachment-editor .upload-inline { min-width: 0; margin-top: auto; }
+.expense-attachment-editor .upload-inline span { min-width: 0; overflow-wrap: anywhere; }
+.attachment-current { display: flex; align-items: flex-start; gap: 8px; color: var(--green-700); font-size: 14px; overflow-wrap: anywhere; }
+.attachment-current svg { flex-shrink: 0; margin-top: 2px; }
+.attachment-pending { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }

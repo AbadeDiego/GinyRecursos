@@ -218,14 +218,18 @@ async function payload(request) {
   check(data && typeof data==='object' && !Array.isArray(data),'Dados inválidos.',400);
   return {data,files,hash:digest(JSON.stringify(data)+files.map(f=>f.kind+f.name+digest(f.bytes)).join('|'))};
 }
-function storeFiles(db,projectId,entity,id,files) {
+function storeFiles(db,projectId,entity,id,files,{replace=false,onChange=()=>{}}={}) {
   const allowed=entity==='expenses'?[...required(record(db,'expenses',id)),'support']:['proof'];
   for(const file of files) {
     check(allowed.includes(file.kind),'Documento incompatível com esta rubrica.');
     check(entity==='resources' ? file.kind==='proof' : !['proof','project'].includes(file.kind),'Documento incompatível.');
     const col=entity==='expenses' ? 'expense_id' : 'resource_id';
-    check(!db.prepare(`SELECT id FROM documents WHERE ${col}=? AND kind=?`).get(id,file.kind),'Já existe um documento desta categoria.',409);
-    db.prepare(`INSERT INTO documents(id,project_id,${col},kind,name,mime,bytes,created_at) VALUES(?,?,?,?,?,?,?,?)`).run(randomUUID(),projectId,id,file.kind,file.name,file.mime,file.bytes,now());
+    const previous=db.prepare(`SELECT id,name,mime,length(bytes) AS size FROM documents WHERE ${col}=? AND kind=?`).get(id,file.kind);
+    check(!previous||replace,'Já existe um documento desta categoria.',409);
+    const documentId=previous?.id||randomUUID();
+    if(previous)db.prepare('UPDATE documents SET name=?,mime=?,bytes=?,created_at=? WHERE id=?').run(file.name,file.mime,file.bytes,now(),documentId);
+    else db.prepare(`INSERT INTO documents(id,project_id,${col},kind,name,mime,bytes,created_at) VALUES(?,?,?,?,?,?,?,?)`).run(documentId,projectId,id,file.kind,file.name,file.mime,file.bytes,now());
+    onChange(documentId,{kind:file.kind,previous:previous||null,name:file.name,mime:file.mime,size:file.bytes.length});
   }
 }
 function csvExport(state, projectId) {
@@ -392,6 +396,7 @@ export function createApplication(db,{origin=process.env.APP_ORIGIN || 'http://l
           }
           else if(entity==='expenses') {
             check(['edit','submit','reconcile'].includes(data.action),'Ação inválida.');
+            check(!files.length||data.action==='edit','Para adicionar ou substituir documentos, use Editar lançamento.');
             let next={...current};delete next.version;delete next.id;delete next.projectId;
             if(data.action==='edit') {
               next=validate('expenses',{...current,...data,draft:current.draft});
@@ -408,7 +413,9 @@ export function createApplication(db,{origin=process.env.APP_ORIGIN || 'http://l
             } else {
               check(sourceOf(current)==='Subvenção','A conciliação bancária está disponível apenas para a conta de subvenção.');check(user.role==='admin','A conciliação exige administrador.',403);check(!current.draft,'Registre a despesa antes de conferir.');next.bankReference=text(data.bankReference,'Referência do extrato',200);next.status='Conciliado';
             }
-            db.prepare('UPDATE expenses SET data=?,value_cents=?,schedule_id=?,version=version+1 WHERE id=?').run(JSON.stringify(next),cents(next.value),next.scheduleId||null,current.id);output=record(db,entity,current.id);
+            db.prepare('UPDATE expenses SET data=?,value_cents=?,schedule_id=?,version=version+1 WHERE id=?').run(JSON.stringify(next),cents(next.value),next.scheduleId||null,current.id);
+            if(files.length)storeFiles(db,current.projectId,entity,current.id,files,{replace:true,onChange:(id,details)=>audit(db,user,details.previous?'replace-document':'upload','documents',id,{expenseId:current.id,...details})});
+            output=record(db,entity,current.id);
           } else if(entity==='resources') {
             const next=validate('resources',{...current,...data});assertResource(db,current.projectId,next,current.id);
             db.prepare('UPDATE resources SET data=?,value_cents=?,installment=?,version=version+1 WHERE id=?').run(JSON.stringify(next),cents(next.value),next.installment,current.id);
