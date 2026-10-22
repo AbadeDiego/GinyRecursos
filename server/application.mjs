@@ -452,12 +452,20 @@ export function createApplication(db,{origin=process.env.APP_ORIGIN || 'http://l
           } else {
             check(['team','schedule','links'].includes(entity),'Edição indisponível para este registro.',405);
             const next=entity==='schedule'?prepareSchedule(db,data,current.projectId):validate(entity,data); const monetary=entity==='schedule';
+            const linkedExpenses=monetary?rows(db,'expenses',current.projectId).filter(e=>e.scheduleId===current.id):[];
+            if(linkedExpenses.length)check(sourceOf(next)===sourceOf(current),'Esta previsão possui lançamentos vinculados. A troca de rubrica mantém a fonte de recursos. Para mudar a fonte, realoque os lançamentos primeiro.');
             if(entity==='links')next.addedAt=current.addedAt;
             if(monetary&&rows(db,'remaps',current.projectId).some(r=>r.sourceScheduleId===current.id||r.destinationScheduleId===current.id))check(next.value===current.value&&next.rubric===rubricName(current)&&sourceOf(next)===sourceOf(current),'Altere o valor, a rubrica ou a fonte pelo remanejamento vinculado.');
             if(monetary&&current.recurrenceId) {check(next.endMonth===next.month&&next.endYear===next.year,'Uma parcela mensal deve começar e terminar no mesmo mês.');}
             if(monetary&&current.statusAutomatic)next.statusAutomatic=true;
             if(monetary&&current.recurrenceId)Object.assign(next,{recurrenceId:current.recurrenceId,installment:current.installment,installments:current.installments});
-            db.prepare(`UPDATE ${entity} SET data=?,version=version+1${monetary?',value_cents=?':''} WHERE id=?`).run(JSON.stringify(next),...(monetary?[cents(next.value,'',true)]:[]),current.id);if(monetary)assertPlan(db,current.projectId,before);output=record(db,entity,current.id);
+            db.prepare(`UPDATE ${entity} SET data=?,version=version+1${monetary?',value_cents=?':''} WHERE id=?`).run(JSON.stringify(next),...(monetary?[cents(next.value,'',true)]:[]),current.id);
+            if(monetary&&next.rubric!==rubricName(current))for(const expense of linkedExpenses) {
+              // Reclassify only this activity. Preserve amounts, bank checks and files.
+              db.prepare("UPDATE expenses SET data=json_set(data,'$.rubric',?,'$.source',?),version=version+1 WHERE id=?").run(next.rubric,sourceOf(expense),expense.id);
+              audit(db,user,'reclassify-rubric','expenses',expense.id,{scheduleId:current.id,from:expense.rubric,to:next.rubric,source:sourceOf(expense),previousVersion:expense.version});
+            }
+            if(monetary)assertPlan(db,current.projectId,before);output=record(db,entity,current.id);
           }
           audit(db,user,method.toLowerCase(),entity,current.id,current);
         }

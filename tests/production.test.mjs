@@ -86,10 +86,16 @@ test('Produção standalone: autenticação, cookies, CRUD, anexos e reinício',
   assert.equal((await call('remaps/'+remapData.id,'DELETE',{version:2})).status,200);
   assert.match(await(await call('reports/'+project.id+'?format=html')).text(),/Resumo financeiro por fonte/);
   const report=await(await call('reports/'+project.id+'?format=json')).json();assert.equal(report.project.executedSubvention,100.30);assert.equal(report.project.executedCounterpart,0);assert.equal(report.activityExecution.activities.find(a=>a.id===activity.id).executionPercent,10.03);
+  const reclassificationState=await(await call('state')).json();
+  const scheduledActivity=reclassificationState.schedule.find(s=>s.id===activity.id);
+  const reclassified=await call('schedule/'+activity.id,'PATCH',{...scheduledActivity,rubric:'Diária'});assert.equal(reclassified.status,200);
+  const reclassifiedState=await(await call('state')).json(),reclassifiedExpense=reclassifiedState.expenses.find(e=>e.id===expense.id);
+  assert.equal(reclassifiedExpense.rubric,'Diária');assert.equal(reclassifiedExpense.scheduleId,activity.id);assert.equal(reclassifiedExpense.docs,2);assert.equal(reclassifiedExpense.requiredDocs,2);assert.equal(reclassifiedState.projects[0].executed,100.30);
+  assert.equal(await(await call('documents/'+documentId)).text(),bytes);
   const backupPath=execFileSync(process.execPath,[join(deployed,'scripts/backup.mjs')],{env:{...env,BACKUP_DIR:join(dir,'backups')},encoding:'utf8'}).trim();
   await stop();env.DATABASE_PATH=backupPath;await start();
   assert.equal(await(await call('documents/'+documentId)).text(),bytes);
-  assert.equal((await(await call('state')).json()).projects[0].executed,100.30);
+  const restoredState=await(await call('state')).json();assert.equal(restoredState.projects[0].executed,100.30);assert.equal(restoredState.expenses.find(e=>e.id===expense.id).rubric,'Diária');assert.equal(restoredState.schedule.find(s=>s.id===activity.id).rubric,'Diária');
   assert.equal(await(await call('projectDocuments/'+general.id)).text(),bytes);
   assert.deepEqual(Buffer.from(await(await call('projectDocuments/'+spreadsheet.id)).arrayBuffer()),spreadsheetBytes);
   assert.equal((await call('projectDocuments/'+general.id,'DELETE',{version:2})).status,200);

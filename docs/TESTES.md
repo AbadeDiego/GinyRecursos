@@ -27,6 +27,7 @@ Ambiente: Node.js 24.19.0, Linux, bancos SQLite temporários. A validação HTTP
 | Recursos | Edição de valores/tipo, substituição de comprovante, conflito de parcela, versão e exclusão |
 | Relatório | Totais por fonte, extrato apenas da subvenção, isolamento entre projetos, HTML escapado e CSV |
 | Rubricas | Personalizadas, duplicidade e limites de contrapartida |
+| Reclassificação pelo Cronograma | Atualização atômica da previsão, despesas e rascunhos vinculados; preservação de IDs, valores, fonte, conciliação, anexos e recorrência; checklist e percentuais recalculados; isolamento por atividade/projeto, rollback, auditoria, idempotência, conflitos e persistência após backup/restauração HTTP |
 | Planejamento legado acima do teto | Edição neutra, redução gradual, exclusão e remanejamento sem aumentar excesso; proteção de execução e rollback de reversões inválidas |
 | Checklist | Diárias com recibo e pagamento; Pró-labore com INSS, recibo e pagamento; demais rubricas com cinco anexos opcionais; contagem e pendências por rubrica, recusa de orçamentos para Diárias e Pró-labore, preservação de anexos anteriores, download e idempotência |
 | Status automático | Execução parcial/total, centavos, rascunhos, fonte e atividade independentes, realocação, exclusão, alteração da previsão e remanejamento, atraso, conflito de versão e auditoria |
@@ -38,7 +39,7 @@ Ambiente: Node.js 24.19.0, Linux, bancos SQLite temporários. A validação HTTP
 | Períodos do cronograma | CSV/XLS/XLSX, mês único, intervalo, virada de ano, inferência pela vigência, término inválido, importação atômica, valores totais, pró-labore mensal, edição de legado, remanejamento e persistência HTTP após reinício |
 | Atrasos | Prazo final, limite de mês no fuso de Brasília, status manual e exclusão de concluídas, sem mutação do registro |
 | Atividade do lançamento | Seleção obrigatória; fonte, rubrica e projeto compatíveis; atividades da mesma rubrica independentes; centavos, rascunhos, edição, realocação, exclusão, idempotência, conflitos, anexos, relatório HTML/JSON/CSV e persistência HTTP |
-| Vínculos do cronograma | Exclusão e alteração de fonte/rubrica bloqueadas com despesas ou rascunhos; proteção do executado ao reduzir previsão/remanejar; edição de remanejamento mantém o ID do destino vinculado |
+| Vínculos do cronograma | Exclusão e alteração de fonte bloqueadas com despesas ou rascunhos; proteção do executado ao reduzir previsão/remanejar; edição de remanejamento mantém o ID do destino vinculado |
 | Migração 5 | Banco anterior, despesas e comprovantes preservados; sem vínculo presumido; realocação manual, reabertura, chaves estrangeiras e migração única |
 | Rubricas de lançamentos | Novas despesas e rascunhos exigem previsão no Cronograma do mesmo projeto e fonte; validação ao registrar rascunhos e ao trocar alocação; edição de despesas legadas preservada |
 | Cadastro editável | Nome, termo, órgão, vigência, parcelas e valores; versão, idempotência, duplicidade, perfil consulta, limites por fonte, excesso legado, preservação de anexos e persistência HTTP após reinício |
@@ -51,9 +52,9 @@ Comando reprodutível:
 npm run test:all
 ```
 
-Resultado da execução em 21/10/2026: **75 testes aprovados, zero falhas**, verificação TypeScript e build concluídos.
+Resultado da execução em 22/10/2026: **79 testes aprovados, zero falhas**, verificação TypeScript e build concluídos.
 
-A suíte contém 74 testes de domínio/integração e 1 cenário HTTP de produção com múltiplas verificações. TypeScript e build fazem parte do comando. Arquivos em `tests/backend.test.mjs` e `tests/production.test.mjs`.
+A suíte contém 78 testes de domínio/integração e 1 cenário HTTP de produção com múltiplas verificações. TypeScript e build fazem parte do comando. Arquivos em `tests/backend.test.mjs` e `tests/production.test.mjs`.
 
 ## Homologação no destino
 
@@ -78,5 +79,7 @@ Antes do uso real:
 13. Em Pró-labore, conferir somente os três anexos (INSS, recibo e pagamento), inclusive checklist e relatório; abrir anexos anteriores. Registrar valores parciais/totais e verificar o status automático da atividade, depois editar/excluir e conferir o recálculo.
 
 14. Em Diária/Diárias, conferir apenas Recibo de diária e Comprovante de pagamento no cadastro e detalhes, ambos opcionais. Conferir checklist 0/2, 1/2 e 2/2, pendências no relatório e download dos anexos anteriores.
+
+15. Editar a rubrica de uma previsão com lançamentos vinculados: conferir o aviso com a quantidade, salvar, abrir os lançamentos, validar a nova rubrica e os mesmos comprovantes. Conferir a fonte preservada e as pendências conforme o novo checklist.
 
 Não foram realizados teste de carga, pentest externo ou integração bancária. A instalação atende uma organização com usuários autorizados e vários projetos. Não constitui um SaaS com organizações independentes isoladas.

@@ -775,7 +775,7 @@ test('Cronograma protege os vínculos, o valor executado e rascunhos; renomear m
  const f=await fixture(),a=await activityFixture(f),b=await activityFixture(f,{activity:'Etapa B'});
  const created=(await f.call('expenses','POST',allocatedExpense(f,a,{value:500}))).data;
  Object.assign(a,(await f.call('state')).data.schedule.find(s=>s.id===a.id));
- for(const change of [{value:499},{rubric:'Consultoria'},{source:'Contrapartida'}])assert.equal((await f.call('schedule/'+a.id,'PATCH',{...a,...change})).status,422);
+ for(const change of [{value:499},{source:'Contrapartida'}])assert.equal((await f.call('schedule/'+a.id,'PATCH',{...a,...change})).status,422);
  assert.equal((await f.call('schedule/'+a.id,'DELETE',{version:a.version})).status,422);
  const changed=await f.call('schedule/'+a.id,'PATCH',{...a,activity:'Web revisado',value:600});assert.equal(changed.status,200);
  assert.equal((await f.call('state')).data.expenses[0].scheduleActivity,'Web revisado');
@@ -917,4 +917,58 @@ test('Diárias preservam orçamentos anteriores sem contá-los no checklist; out
  const changed=(await f.call('state')).data.expenses[0];assert.equal(changed.requiredDocs,2);assert.equal(changed.docs,2);assert.equal(changed.documents.length,5);assert.deepEqual(changed.missingDocuments,[]);
  for(const doc of changed.documents)assert.equal((await f.call('documents/'+doc.id)).data,pdf);
  const csv=(await f.call('reports/'+f.projectId)).data;assert.match(csv,/2\/2/);f.db.close();
+});
+
+test('Editar rubrica da previsão reclassifica só os lançamentos vinculados, preservando anexos e conciliação',async()=>{
+ const f=await fixture(),a=await activityFixture(f),b=await activityFixture(f,{activity:'Outra atividade PJ'});
+ const e=(await f.call('expenses','POST',allocatedExpense(f,a,{value:300}),{files:{invoice:pdf,payment:pdf,quote1:pdf,quote2:pdf,quote3:pdf}})).data;
+ const draft=(await f.call('expenses','POST',allocatedExpense(f,a,{value:200,draft:true}))).data;
+ const other=(await f.call('expenses','POST',allocatedExpense(f,b))).data;
+ const second=(await f.call('projects','POST',{...f.project,code:'RUB-2'})).data;
+ const external=await activityFixture(f,{projectId:second.id});
+ const externalExpense=(await f.call('expenses','POST',{...allocatedExpense(f,external),projectId:second.id})).data;
+ assert.equal((await f.call('expenses/'+e.id,'PATCH',{version:1,action:'reconcile',bankReference:'BANK-123'})).status,200);
+ const before=(await f.call('state')).data,current=before.schedule.find(s=>s.id===a.id),key=randomUUID(),data={...current,rubric:'Diária'};
+ const changed=await f.call('schedule/'+a.id,'PATCH',data,{key});assert.equal(changed.status,200);assert.equal(changed.data.id,a.id);assert.equal(changed.data.rubric,'Diária');assert.equal(changed.data.item,'Diária');
+ const repeated=await f.call('schedule/'+a.id,'PATCH',data,{key});assert.deepEqual(repeated.data,changed.data);
+ const after=(await f.call('state')).data,expenseAfter=after.expenses.find(x=>x.id===e.id),draftAfter=after.expenses.find(x=>x.id===draft.id);
+ assert.equal(expenseAfter.rubric,'Diária');assert.equal(expenseAfter.value,300);assert.equal(expenseAfter.scheduleId,a.id);assert.equal(expenseAfter.status,'Conciliado');assert.equal(expenseAfter.bankReference,'BANK-123');assert.equal(expenseAfter.version,3);
+ assert.equal(expenseAfter.docs,2);assert.equal(expenseAfter.requiredDocs,2);assert.deepEqual(expenseAfter.documents,before.expenses.find(x=>x.id===e.id).documents);
+ for(const doc of expenseAfter.documents)assert.equal((await f.call('documents/'+doc.id)).data,pdf);
+ assert.equal(draftAfter.rubric,'Diária');assert.equal(draftAfter.draft,true);assert.equal(draftAfter.version,2);
+ for(const id of [other.id,externalExpense.id])assert.deepEqual(after.expenses.find(x=>x.id===id),before.expenses.find(x=>x.id===id));
+ assert.equal(after.projects.find(x=>x.id===f.projectId).executedSubvention,400);assert.equal(after.schedule.find(s=>s.id===a.id).status,'Em andamento');
+ const report=(await f.call('reports/'+f.projectId+'?format=json')).data;assert.equal(report.activityExecution.activities.find(s=>s.id===a.id).executionPercent,30);assert.equal(report.planning.find(p=>p.rubric==='Diária').executed,300);
+ assert.equal((await f.call('expenses/'+e.id,'PATCH',{version:2,action:'edit',description:'Edição antiga'})).status,409);
+ assert.equal(f.db.prepare("SELECT count(*) AS n FROM audit WHERE action='reclassify-rubric'").get().n,2);f.db.close();
+});
+test('Reclassificação inválida reverte previsão, lançamentos, rubrica nova e auditoria juntos',async()=>{
+ const f=await fixture(),a=await activityFixture(f,{value:500});await f.call('expenses','POST',allocatedExpense(f,a,{value:400}),{files:{invoice:pdf}});
+ const before=(await f.call('state')).data,current=before.schedule.find(x=>x.id===a.id),audits=f.db.prepare('SELECT count(*) AS n FROM audit').get().n;
+ for(const change of [{rubric:'Nova rubrica temporária',value:399},{rubric:'Nova rubrica temporária',value:10001},{rubric:'Consultoria',source:'Contrapartida'}]) {
+  const r=await f.call('schedule/'+a.id,'PATCH',{...current,...change});assert.equal(r.status,422);
+  if(change.source)assert.match(r.data.error,/mantém a fonte/);
+  assert.deepEqual((await f.call('state')).data,before);assert.equal(f.db.prepare('SELECT count(*) AS n FROM audit').get().n,audits);
+ }
+ assert.equal((await f.call('schedule/'+a.id,'PATCH',{...current,rubric:'Consultoria'})).status,200);
+ assert.equal((await f.call('schedule/'+a.id,'PATCH',{...current,rubric:'Bolsa'})).status,409);f.db.close();
+});
+test('Troca de rubrica preserva contrapartida inferida e não reclassifica despesas sem vínculo',async()=>{
+ const f=await fixture(),a=await activityFixture(f,{rubric:'Contrapartida',source:'Contrapartida',value:1000}),b=await activityFixture(f,{rubric:'Contrapartida',source:'Contrapartida',value:500});
+ const e=(await f.call('expenses','POST',allocatedExpense(f,a,{value:100}))).data;
+ f.db.prepare("UPDATE expenses SET data=json_remove(data,'$.source') WHERE id=?").run(e.id);
+ const legacy=legacyExpense(f,{rubric:'Contrapartida',source:'Contrapartida',value:100});
+ const current=(await f.call('state')).data.schedule.find(x=>x.id===a.id);
+ const r=await f.call('schedule/'+a.id,'PATCH',{...current,rubric:'Consultoria'});assert.equal(r.status,200);
+ const state=(await f.call('state')).data,updated=state.expenses.find(x=>x.id===e.id);
+ assert.equal(updated.rubric,'Consultoria');assert.equal(updated.source,'Contrapartida');assert.equal(state.projects[0].executedCounterpart,200);assert.equal(state.projects[0].executedSubvention,0);
+ assert.equal(state.expenses.find(x=>x.id===legacy.id).rubric,'Contrapartida');assert.equal(state.expenses.find(x=>x.id===legacy.id).scheduleId,null);assert.equal(state.schedule.find(x=>x.id===b.id).rubric,'Contrapartida');f.db.close();
+});
+test('Reclassificação de uma parcela mantém recorrência e checklist sem alterar os demais meses',async()=>{
+ const f=await fixture(),monthly=(await f.call('schedule','POST',{projectId:f.projectId,rubric:'Pessoal / Pró-labore',activity:'Coordenação',month:'Janeiro',year:2027,value:300,monthsCount:2})).data;
+ const e=(await f.call('expenses','POST',allocatedExpense(f,monthly[0],{value:300}),{files:{inss:pdf,invoice:pdf,payment:pdf}})).data;
+ const before=(await f.call('state')).data,current=before.schedule.find(x=>x.id===monthly[0].id);
+ const changed=await f.call('schedule/'+current.id,'PATCH',{...current,rubric:'Diária'});assert.equal(changed.status,200);assert.equal(changed.data.recurrenceId,current.recurrenceId);assert.equal(changed.data.installment,1);assert.equal(changed.data.status,'Concluída');
+ const after=(await f.call('state')).data;assert.deepEqual(after.schedule.find(x=>x.id===monthly[1].id),before.schedule.find(x=>x.id===monthly[1].id));
+ const updated=after.expenses.find(x=>x.id===e.id);assert.equal(updated.docs,2);assert.equal(updated.requiredDocs,2);assert.equal(updated.documents.length,3);assert.equal(after.projects[0].executed,300);f.db.close();
 });
