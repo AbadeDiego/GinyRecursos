@@ -1,4 +1,7 @@
 "use client";
+import {ScholarshipsView,ScholarshipTotalCard} from './scholarships';
+import type {ScholarshipData} from '../lib/scholarship-types';
+import {scholarshipSummary} from '../lib/scholarships.mjs';
 
 import { expenseDocumentLabels, expenseDocumentKeys } from "../lib/expense-documents.mjs";
 import { activityExecution } from "../lib/activity-execution.mjs";
@@ -31,6 +34,7 @@ import {
   FileText,
   FolderOpen,
   Gauge,
+  GraduationCap,
   HandCoins,
   IdCard,
   Landmark,
@@ -65,6 +69,7 @@ import { Login, AccountPanel, type AppUser } from "./account-panel";
 type View =
   | "overview"
   | "companies"
+  | "scholarships"
   | "team"
   | "schedule"
   | "entries"
@@ -76,6 +81,7 @@ type View =
   | "reports";
 
 type Project = {
+  scholarshipTotal?:number;
   version: number;
   id: string;
   companyId: string;
@@ -100,6 +106,7 @@ type Project = {
 };
 
 type Company = {
+  scholarshipTotal?:number;
   version: number;
   id: string;
   name: string;
@@ -264,6 +271,7 @@ const scheduleStatuses: ScheduleStatus[] = ["Não iniciada", "Em andamento", "Co
 
 const navItems: { id: View; label: string; icon: typeof LayoutDashboard }[] = [
   { id: "companies", label: "Empresas e projetos", icon: Building2 },
+  { id: "scholarships", label: "Bolsas", icon: GraduationCap },
   { id: "overview", label: "Visão geral", icon: LayoutDashboard },
   { id: "schedule", label: "Cronograma", icon: CalendarDays },
   { id: "entries", label: "Lançamentos", icon: ReceiptText },
@@ -277,6 +285,7 @@ const navItems: { id: View; label: string; icon: typeof LayoutDashboard }[] = [
 ];
 
 const viewTitles: Record<View, { eyebrow: string; title: string; subtitle: string }> = {
+  scholarships: {eyebrow:"Gestão de bolsas",title:"Bolsas",subtitle:"Beneficiários, recebimentos, repasses e atividades em um acompanhamento próprio."},
   overview: { eyebrow: "Painel do projeto", title: "Visão geral", subtitle: "Acompanhe a execução física e financeira em um só lugar." },
   companies: { eyebrow: "Estrutura da organização", title: "Empresas e projetos", subtitle: "Cadastre empresas, organize projetos aprovados e alterne entre eles." },
   team: { eyebrow: "Gestão do projeto", title: "Equipe técnica", subtitle: "Organize funções e atividades dos membros vinculados ao projeto." },
@@ -329,7 +338,7 @@ type RemapDraft = {sourceScheduleId:string;to:string;activity:string;month:strin
 type Remap = {source?:FundingSource;destinationScheduleId?:string;sourceScheduleId?:string;sourceActivity?:string;activity?:string;month?:string;year?:number;id: string; projectId: string; from: string; to: string; value: number; reason: string; date: string; status: "Aprovado" | "Aguardando aprovação"; version: number; authorization?: string};
 type BudgetRow = CsvBudgetRow & {id: string; projectId: string};
 type ProjectDocument = {id:string;projectId:string;version:number;name:string;filename:string;mime:string;size:number;createdAt:string};
-type State = {projectDocuments:ProjectDocument[];rubrics: (RubricOption & {projectId:string})[]; user: AppUser; companies: Company[]; projects: Project[]; expenses: Expense[]; team: TeamMember[]; schedule: ScheduleItem[]; links: ProjectLink[]; resources: Resource[]; budget: BudgetRow[]; remaps: Remap[]};
+type State = ScholarshipData & {projectDocuments:ProjectDocument[];rubrics: (RubricOption & {projectId:string})[]; user: AppUser; companies: Company[]; projects: Project[]; expenses: Expense[]; team: TeamMember[]; schedule: ScheduleItem[]; links: ProjectLink[]; resources: Resource[]; budget: BudgetRow[]; remaps: Remap[]};
 const emptyProject: Project = {id:"",companyId:"",name:"Cadastre seu primeiro projeto",code:"",agency:"",period:"",approved:0,counterpart:0,counterpartRealized:0,released:0,executed:0,income:0,version:1};
 const emptyCompany: Company = {id:"",name:"",short:"",cnpj:"",city:"",state:"",responsible:"",email:"",phone:"",version:1};
 export default function Home() {
@@ -343,6 +352,9 @@ export default function Home() {
 }
 function Workspace({initial,onLogout}: {initial: State;onLogout:()=>void}) {
 
+  const [scholarshipData,setScholarshipData]=useState<ScholarshipData>({scholarships:initial.scholarships||[],scholarshipEntries:initial.scholarshipEntries||[],scholarshipActivities:initial.scholarshipActivities||[]});
+  const [scholarshipScope,setScholarshipScope]=useState<{companyId?:string;projectId?:string}>({});
+  const openScholarships=(scope:{companyId?:string;projectId?:string}={})=>{setScholarshipScope(scope);setView('scholarships');};
   const [view, setView] = useState<View>("overview");
   const [entryActivityId,setEntryActivityId]=useState("");
   const [companyList, setCompanyList] = useState<Company[]>(initial.companies);
@@ -414,7 +426,7 @@ function Workspace({initial,onLogout}: {initial: State;onLogout:()=>void}) {
     approved:(activeScheduleItems.filter(s=>(s.rubric||s.item)===r.name).reduce((sum,s)=>sum+Math.round(s.value*100),0)+remaps.filter(m=>m.projectId===activeProject.id&&m.status==="Aprovado"&&!m.sourceScheduleId).reduce((sum,m)=>sum+(m.to===r.name?Math.round(m.value*100):m.from===r.name?-Math.round(m.value*100):0),0))/100,
     executed:projectEntries.filter(e=>!e.draft&&e.rubric===r.name).reduce((sum,e)=>sum+Math.round(e.value*100),0)/100,
   }));
-  const refresh=async()=>{const state:State=await api("state");setCompanyList(state.companies);setProjectList(state.projects);setEntries(state.expenses);setProjectLinks(state.links);setProjectDocuments(state.projectDocuments || []);setTeamMembers(state.team);setScheduleItems(state.schedule);setResources(state.resources);setBudgetRows(state.budget);setRemaps(state.remaps);setCustomRubrics(state.rubrics || []);return state;};
+  const refresh=async()=>{const state:State=await api("state");setScholarshipData({scholarships:state.scholarships||[],scholarshipEntries:state.scholarshipEntries||[],scholarshipActivities:state.scholarshipActivities||[]});setCompanyList(state.companies);setProjectList(state.projects);setEntries(state.expenses);setProjectLinks(state.links);setProjectDocuments(state.projectDocuments || []);setTeamMembers(state.team);setScheduleItems(state.schedule);setResources(state.resources);setBudgetRows(state.budget);setRemaps(state.remaps);setCustomRubrics(state.rubrics || []);return state;};
   const commit=async(action:()=>Promise<unknown>, after:()=>void, message:string)=>{
     if(saving.current)return; saving.current=true;setBusy(true);setSaveError("");
     let saved=false;
@@ -496,7 +508,7 @@ function Workspace({initial,onLogout}: {initial: State;onLogout:()=>void}) {
           {navItems.map((item) => {
             const Icon = item.icon;
             return (
-              <button key={item.id} className={view === item.id ? "active" : ""} onClick={() => navigate(item.id)}>
+              <button key={item.id} className={view === item.id ? "active" : ""} onClick={() => {if(item.id==="scholarships")setScholarshipScope({});navigate(item.id);}}>
                 <Icon size={18} strokeWidth={2} /><span>{item.label}</span>{item.id === "entries" && pendingProjectDocuments > 0 && <em>{pendingProjectDocuments}</em>}
               </button>
             );
@@ -557,7 +569,7 @@ function Workspace({initial,onLogout}: {initial: State;onLogout:()=>void}) {
                   <button className="secondary-button" onClick={() => startProjectCreation(profileCompanyId)}><Rocket size={17} /> Novo projeto</button>
                   <button className="primary-button" onClick={() => setCompanyModalOpen(true)}><Plus size={18} /> Nova empresa</button>
                 </>
-              ) : view === "team" ? (
+              ) : view === "scholarships" ? (<span className="automatic-heading-status"><GraduationCap size={17}/> Recursos separados da subvenção</span>) : view === "team" ? (
                 <>
                   <button className="secondary-button" onClick={() => setTeamImportOpen(true)}><FileSpreadsheet size={18} /> Importar CSV</button>
                   <button className="primary-button" onClick={() => setTeamMemberCreateOpen(true)}><Plus size={18} /> Adicionar membro</button>
@@ -583,8 +595,9 @@ function Workspace({initial,onLogout}: {initial: State;onLogout:()=>void}) {
           </div>
 
           {(view==="schedule"||view==="remaps")&&activeProject.planningWarnings?.map(w=><div className="notice-banner" key={w.source}><AlertCircle size={21}/><div><strong>{w.source}: planejamento {money(w.excess)} acima do limite</strong><span>Planejado: {money(w.planned)} · Limite: {money(w.limit)}. Você pode editar e reduzir as previsões sem aumentar o excesso. Valores já executados continuam protegidos.</span></div></div>)}
-          {view === "overview" && <Overview schedule={activeScheduleItems} onViewActivity={id=>{setEntryActivityId(id);setView("entries");}} resources={resources.filter(r=>r.projectId===activeProject.id)} onEditResource={setEditingResource} project={activeProject} rubrics={activeRubrics} entries={projectEntries} navigate={navigate} openEntry={setSelectedExpense} />}
-          {view === "companies" && <CompaniesView companies={companyList} projects={projectList} selectedCompanyId={profileCompanyId} activeProjectId={projectId} onSelectCompany={setProfileCompanyId} onNewCompany={() => setCompanyModalOpen(true)} onNewProject={startProjectCreation} onSwitchProject={switchProject} />}
+          {view === "scholarships" && <ScholarshipsView key={JSON.stringify(scholarshipScope)} companies={companyList} projects={projectList} data={scholarshipData} user={initial.user} refresh={refresh} scope={scholarshipScope}/> }
+          {view === "overview" && <Overview onOpenScholarships={()=>openScholarships({companyId:activeProject.companyId,projectId:activeProject.id})} schedule={activeScheduleItems} onViewActivity={id=>{setEntryActivityId(id);setView("entries");}} resources={resources.filter(r=>r.projectId===activeProject.id)} onEditResource={setEditingResource} project={activeProject} rubrics={activeRubrics} entries={projectEntries} navigate={navigate} openEntry={setSelectedExpense} />}
+          {view === "companies" && <CompaniesView scholarshipTotal={scholarshipSummary(scholarshipData.scholarships,[]).planned} onOpenScholarships={openScholarships} companies={companyList} projects={projectList} selectedCompanyId={profileCompanyId} activeProjectId={projectId} onSelectCompany={setProfileCompanyId} onNewCompany={() => setCompanyModalOpen(true)} onNewProject={startProjectCreation} onSwitchProject={switchProject} />}
           {view === "team" && <TeamView project={activeProject} members={activeTeamMembers} onImport={() => setTeamImportOpen(true)} onAdd={() => setTeamMemberCreateOpen(true)} onEdit={setEditingTeamMember} onDelete={setTeamMemberToDelete} />}
           {view === "schedule" && <ScheduleView onAdd={()=>setScheduleCreateOpen(true)} project={activeProject} items={activeScheduleItems} onImport={() => setScheduleImportOpen(true)} onEdit={setEditingScheduleItem} />}
           {view === "entries" && <Entries schedule={activeScheduleItems} activityFilter={entryActivityId} onActivityFilter={setEntryActivityId} projectId={activeProject.id} entries={projectEntries} openEntry={setSelectedExpense} newEntry={() => setNewEntryOpen(true)} rubrics={rubricOptions} onEdit={setEditingExpense} onDelete={setDeletingExpense} />}
@@ -626,6 +639,7 @@ function Workspace({initial,onLogout}: {initial: State;onLogout:()=>void}) {
 }
 
 function CompaniesView({
+  scholarshipTotal,onOpenScholarships,
   companies,
   projects,
   selectedCompanyId,
@@ -635,6 +649,7 @@ function CompaniesView({
   onNewProject,
   onSwitchProject,
 }: {
+  scholarshipTotal:number;onOpenScholarships:(scope?:{companyId?:string;projectId?:string})=>void;
   companies: Company[];
   projects: Project[];
   selectedCompanyId: string;
@@ -645,7 +660,7 @@ function CompaniesView({
   onSwitchProject: (projectId: string) => void;
 }) {
   const [query, setQuery] = useState("");
-  const selectedCompany = companies.find((company) => company.id === selectedCompanyId) || companies[0];
+  const selectedCompany = companies.find((company) => company.id === selectedCompanyId) || companies[0] || emptyCompany;
   const selectedProjects = projects.filter((project) => project.companyId === selectedCompany.id);
   const filteredCompanies = companies.filter((company) => (company.name + company.short + company.cnpj).toLowerCase().includes(query.toLowerCase()));
   const totalApproved = projects.reduce((sum, project) => sum + project.approved, 0);
@@ -657,7 +672,7 @@ function CompaniesView({
         <article><span className="organization-stat-icon"><Building2 size={20} /></span><div><span>Empresas cadastradas</span><strong>{companies.length}</strong><small>perfis ativos</small></div></article>
         <article><span className="organization-stat-icon blue"><Rocket size={20} /></span><div><span>Projetos aprovados</span><strong>{projects.length}</strong><small>{executing} em acompanhamento</small></div></article>
         <article><span className="organization-stat-icon amber"><CircleDollarSign size={20} /></span><div><span>Subvenção gerenciada</span><strong>{compactMoney(totalApproved)}</strong><small>em todos os projetos</small></div></article>
-        <article><span className="organization-stat-icon green"><ShieldCheck size={20} /></span><div><span>Cadastros completos</span><strong>100%</strong><small>empresas com responsável</small></div></article>
+        <article><span className="organization-stat-icon green"><GraduationCap size={20}/></span><div><span>Total de bolsas</span><strong>{money(scholarshipTotal)}</strong><small>previsto em todas as vigências</small><button className="text-button" onClick={()=>onOpenScholarships()}>Gerenciar bolsas</button></div></article>
       </section>
 
       <section className="company-workspace">
@@ -697,6 +712,7 @@ function CompaniesView({
             <div><span className="profile-detail-icon"><Phone size={17} /></span><p><small>Telefone</small><strong>{selectedCompany.phone}</strong></p></div>
           </div>
 
+          <ScholarshipTotalCard label="Total de bolsas da empresa" value={selectedCompany.scholarshipTotal||0} onOpen={()=>onOpenScholarships({companyId:selectedCompany.id})}/>
           <div className="company-projects-header">
             <div><span>Projetos aprovados</span><h3>{selectedProjects.length} {selectedProjects.length === 1 ? "projeto vinculado" : "projetos vinculados"}</h3></div>
             <button className="primary-button small" onClick={() => onNewProject(selectedCompany.id)}><Plus size={16} /> Novo projeto</button>
@@ -837,12 +853,13 @@ function ProjectModal({
 }
 
 function Overview({
-  project, resources, onEditResource, schedule, onViewActivity,
+  project, resources, onEditResource, schedule, onViewActivity, onOpenScholarships,
   rubrics,
   entries,
   navigate,
   openEntry,
 }: {
+  onOpenScholarships:()=>void;
   project: Project; resources:Resource[]; onEditResource:(r:Resource)=>void;
   schedule:ScheduleItem[]; onViewActivity:(id:string)=>void;
   rubrics: typeof baseRubrics;
@@ -916,6 +933,7 @@ function Overview({
         <article className="metric-card"><div className="metric-card-head"><span>Saldo · Contrapartida</span><div className="metric-icon amber"><HandCoins size={20}/></div></div><strong>{money(project.counterpartRealized-counterExecuted)}</strong><div className="metric-footer muted">Aportes próprios menos despesas da contrapartida</div></article>
       </section>
 
+      <ScholarshipTotalCard label="Total de bolsas do projeto" value={project.scholarshipTotal||0} onOpen={onOpenScholarships}/>
       <ActivityExecutionPanel key={project.id} project={project} schedule={schedule} expenses={entries} onViewActivity={onViewActivity}/>
       <OverviewResources resources={resources} onEdit={onEditResource} onViewAll={()=>navigate("resources")}/>
       <section className="overview-grid">

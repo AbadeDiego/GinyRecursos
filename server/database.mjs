@@ -88,6 +88,17 @@ export function openDatabase(path = process.env.DATABASE_PATH || './data/subvenc
       db.prepare("INSERT INTO migrations VALUES(6,datetime('now'))").run();
     });
   }
+  if (!db.prepare('SELECT version FROM migrations WHERE version=7').get()) {
+    transaction(db,()=>db.exec(`
+      CREATE TABLE scholarships(id TEXT PRIMARY KEY, company_id TEXT NOT NULL REFERENCES companies(id), project_id TEXT REFERENCES projects(id), data TEXT NOT NULL CHECK(json_valid(data)), version INTEGER NOT NULL DEFAULT 1);
+      CREATE INDEX scholarships_company ON scholarships(company_id);
+      CREATE INDEX scholarships_project ON scholarships(project_id);
+      CREATE TABLE scholarshipEntries(id TEXT PRIMARY KEY, scholarship_id TEXT NOT NULL REFERENCES scholarships(id) ON DELETE RESTRICT, competence TEXT NOT NULL, value_cents INTEGER NOT NULL CHECK(value_cents>0), data TEXT NOT NULL CHECK(json_valid(data)), version INTEGER NOT NULL DEFAULT 1, UNIQUE(scholarship_id,competence));
+      CREATE TABLE scholarshipActivities(id TEXT PRIMARY KEY, scholarship_id TEXT NOT NULL REFERENCES scholarships(id) ON DELETE RESTRICT, data TEXT NOT NULL CHECK(json_valid(data)), version INTEGER NOT NULL DEFAULT 1);
+      CREATE INDEX scholarshipActivities_parent ON scholarshipActivities(scholarship_id);
+      INSERT INTO migrations VALUES(7,datetime('now'));
+    `));
+  }
   return db;
 }
 

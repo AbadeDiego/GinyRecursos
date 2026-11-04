@@ -96,10 +96,20 @@ test('Produção standalone: autenticação, cookies, CRUD, anexos e reinício',
   const reclassifiedState=await(await call('state')).json(),reclassifiedExpense=reclassifiedState.expenses.find(e=>e.id===expense.id);
   assert.equal(reclassifiedExpense.rubric,'Diária');assert.equal(reclassifiedExpense.scheduleId,activity.id);assert.equal(reclassifiedExpense.docs,2);assert.equal(reclassifiedExpense.requiredDocs,2);assert.equal(reclassifiedState.projects[0].executed,100.30);
   assert.equal(await(await call('documents/'+documentId)).text(),replacementBytes);
+  // Independent scholarships ledger through the deployed HTTP server.
+  const scholarship=await(await call('scholarships','POST',{companyId:company.id,projectId:project.id,name:'Bolsa HTTP',beneficiaryType:'thirdParty',beneficiaryName:'Ana bolsista',monthlyValue:1000,startMonth:'2026-01',endMonth:'2026-03',destinations:[{name:'Laboratório',percent:30}]})).json();assert.ok(scholarship.id);
+  const companyScholarship=await(await call('scholarships','POST',{companyId:company.id,projectId:null,name:'Bolsa própria HTTP',beneficiaryType:'self',monthlyValue:2000,startMonth:'2026-01',endMonth:'2026-03',destinations:[]})).json();assert.ok(companyScholarship.id);
+  const scholarshipEntry=await(await call('scholarshipEntries','POST',{scholarshipId:scholarship.id,scholarshipVersion:1,competence:'2026-01',value:1000,receivedDate:'2026-02-01',destinations:[{id:'lab',name:'Laboratório',value:300,paidDate:null}]})).json();assert.ok(scholarshipEntry.id);assert.equal(scholarshipEntry.beneficiaryValue,700);
+  assert.equal((await call('scholarshipEntries/'+scholarshipEntry.id,'PATCH',{version:1,destinations:[{id:'lab',name:'Laboratório',value:300,paidDate:'2026-02-02'}]})).status,200);
+  const scholarshipActivity=await(await call('scholarshipActivities','POST',{scholarshipId:scholarship.id,scholarshipVersion:1,title:'Relatório HTTP',responsible:'Ana',dueDate:'2026-01-31',status:'Em andamento'})).json();assert.ok(scholarshipActivity.id);
+  assert.equal((await call('scholarshipActivities/'+scholarshipActivity.id,'PATCH',{version:1,status:'Concluída',notes:'Entregue'})).status,200);
+  const scholarshipState=await(await call('state')).json();assert.equal(scholarshipState.projects[0].scholarshipTotal,3000);assert.equal(scholarshipState.companies[0].scholarshipTotal,9000);assert.equal(scholarshipState.projects[0].executed,100.30);
+  await stop();await start();const afterScholarshipRestart=await(await call('state')).json();assert.equal(afterScholarshipRestart.scholarshipEntries[0].destinations[0].paidDate,'2026-02-02');assert.equal(afterScholarshipRestart.scholarshipActivities[0].status,'Concluída');
   const backupPath=execFileSync(process.execPath,[join(deployed,'scripts/backup.mjs')],{env:{...env,BACKUP_DIR:join(dir,'backups')},encoding:'utf8'}).trim();
   await stop();env.DATABASE_PATH=backupPath;await start();
   assert.equal(await(await call('documents/'+documentId)).text(),replacementBytes);
   const restoredState=await(await call('state')).json();assert.equal(restoredState.projects[0].executed,100.30);assert.equal(restoredState.expenses.find(e=>e.id===expense.id).rubric,'Diária');assert.equal(restoredState.schedule.find(s=>s.id===activity.id).rubric,'Diária');
+  assert.deepEqual(restoredState.scholarships,afterScholarshipRestart.scholarships);assert.deepEqual(restoredState.scholarshipEntries,afterScholarshipRestart.scholarshipEntries);assert.deepEqual(restoredState.scholarshipActivities,afterScholarshipRestart.scholarshipActivities);assert.equal(restoredState.projects[0].scholarshipTotal,3000);assert.equal(restoredState.companies[0].scholarshipTotal,9000);
   assert.equal(await(await call('projectDocuments/'+general.id)).text(),bytes);
   assert.deepEqual(Buffer.from(await(await call('projectDocuments/'+spreadsheet.id)).arrayBuffer()),spreadsheetBytes);
   assert.equal((await call('projectDocuments/'+general.id,'DELETE',{version:2})).status,200);

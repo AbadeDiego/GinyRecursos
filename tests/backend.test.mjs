@@ -1030,3 +1030,109 @@ test('Edição de documentos segue checklist da nova rubrica e preserva rascunho
  assert.equal((await f.call('documents/'+current.documents.find(x=>x.kind==='quote1').id)).data,pdf);
  assert.equal((await f.call('expenses/'+e.id,'PATCH',{action:'edit',version:3},{files:{quote1:replacement}})).status,422);f.db.close();
 });
+
+// Scholarships are a separate ledger, with no writes to grant expenditure.
+const scholarshipInput=f=>({companyId:f.company.id,projectId:f.projectId,name:'Bolsa de pesquisa',beneficiaryType:'thirdParty',beneficiaryName:'Ana',monthlyValue:1000,startMonth:'2026-01',endMonth:'2026-03',destinations:[{id:'lab',name:'Laboratório',percent:20},{id:'gestao',name:'Gestão',percent:10}],notes:''});
+async function makeScholarship(f,overrides={}) {const r=await f.call('scholarships','POST',{...scholarshipInput(f),...overrides});assert.equal(r.status,201,JSON.stringify(r.data));return r.data;}
+const scholarshipEntryInput=(s,overrides={})=>({scholarshipId:s.id,scholarshipVersion:s.version,competence:'2026-01',value:1000,receivedDate:'2026-02-01',destinations:[{id:'lab',name:'Laboratório',value:200,paidDate:null},{id:'gestao',name:'Gestão',value:100,paidDate:'2026-02-02'}],notes:'',...overrides});
+const scholarshipTaskInput=s=>({scholarshipId:s.id,scholarshipVersion:s.version,title:'Relatório mensal',responsible:'Ana',description:'Preparar resultados',dueDate:'2026-01-31',status:'Em andamento',notes:''});
+
+test('Bolsas próprias e de terceiros: vínculo com empresa/projeto, total sem duplicação nem impacto na subvenção',async()=>{
+ const f=await fixture();const before=(await f.call('state')).data.projects[0];
+ const own=await makeScholarship(f,{beneficiaryType:'self',beneficiaryName:'Nome adulterado',projectId:null,destinations:[]});assert.equal(own.beneficiaryName,admin.name);assert.equal(own.ownerUserId,(await f.call('state')).data.user.id);
+ const third=await makeScholarship(f);await makeScholarship(f,{beneficiaryName:'Bia',destinations:[]});
+ const e=await f.call('scholarshipEntries','POST',scholarshipEntryInput(third));assert.equal(e.status,201);assert.equal(e.data.beneficiaryValue,700);
+ const ownEntry=await f.call('scholarshipEntries','POST',scholarshipEntryInput(own,{destinations:[]}));assert.equal(ownEntry.status,201);assert.equal(ownEntry.data.beneficiaryValue,1000);
+ const state=(await f.call('state')).data;assert.equal(state.companies[0].scholarshipTotal,9000);assert.equal(state.projects[0].scholarshipTotal,6000);assert.equal(state.scholarships.length,3);assert.deepEqual({...state.projects[0],scholarshipTotal:before.scholarshipTotal},before);
+ assert.equal(state.expenses.length,0);assert.equal(state.resources.length,0);assert.equal(state.schedule.length,0);
+ const report=(await f.call('reports/'+f.projectId+'?format=json')).data;assert.equal(report.scholarships.length,2);assert.equal(report.scholarshipEntries.length,1);assert.equal(report.project.executed,0);assert.equal(report.reconciliation.balance,0);f.db.close();
+});
+
+test('Bolsas validam vínculo, vigência, valores e percentuais antes de persistir',async()=>{
+ const f=await fixture(),other=(await f.call('companies','POST',{...f.company,name:'Outra',cnpj:'1'})).data;
+ const invalid=[{companyId:other.id},{companyId:'ausente',projectId:null},{projectId:'ausente'},{startMonth:'2026-13'},{endMonth:'2025-12'},{endMonth:'2036-01'},{monthlyValue:0},{monthlyValue:1.001},{beneficiaryType:'thirdParty',beneficiaryName:''},{destinations:[{name:'A',percent:70},{name:'B',percent:31}]},{destinations:[{name:'A',percent:0}]},{destinations:[{name:'A',percent:1.001}]},{destinations:[{name:'A',percent:10},{name:'a',percent:10}]},{destinations:[{id:'same',name:'A',percent:10},{id:'same',name:'B',percent:10}]}];
+ for(const patch of invalid){const r=await f.call('scholarships','POST',{...scholarshipInput(f),...patch});assert.ok([422,404].includes(r.status),JSON.stringify(patch)+JSON.stringify(r));}
+ assert.equal((await f.call('state')).data.scholarships.length,0);
+ const full=await makeScholarship(f,{destinations:[{name:'Destino único',percent:100}]});assert.equal(full.destinations.length,1);
+ assert.equal((await f.call('scholarships','POST',scholarshipInput(f),{files:{invoice:pdf}})).status,422);f.db.close();
+});
+
+test('Lançamentos de bolsas: recebimento, repasses, soma, datas, competência e unicidade',async()=>{
+ const f=await fixture(),s=await makeScholarship(f);
+ const invalid=[{competence:'2025-12'},{competence:'2026-04'},{value:1000.01},{value:-1},{value:10.001},{receivedDate:'2026-02-30'},{receivedDate:'2199-01-01'},{receivedDate:null},{destinations:[{name:'A',value:1000.01}]},{destinations:[{name:'A',value:1,paidDate:'2026-01-31'}]},{destinations:[{name:'A',value:1,paidDate:'2199-01-01'}]},{destinations:[{name:'A',value:0,paidDate:'2026-02-01'}]}];
+ for(const patch of invalid)assert.equal((await f.call('scholarshipEntries','POST',scholarshipEntryInput(s,patch))).status,422,JSON.stringify(patch));
+ const r=await f.call('scholarshipEntries','POST',scholarshipEntryInput(s));assert.equal(r.status,201);
+ assert.equal((await f.call('scholarshipEntries','POST',scholarshipEntryInput(s))).status,409);
+ const all=await f.call('scholarshipEntries','POST',scholarshipEntryInput(s,{competence:'2026-02',destinations:[{name:'Destino',value:1000,paidDate:null}]}));assert.equal(all.status,201);assert.equal(all.data.beneficiaryValue,0);
+ const pending=await f.call('scholarshipEntries','POST',scholarshipEntryInput(s,{competence:'2026-03',receivedDate:null,destinations:[]}));assert.equal(pending.status,201);
+ const {scholarshipSummary,scholarshipEntryStatus}=await import('../lib/scholarships.mjs');const state=(await f.call('state')).data;assert.deepEqual(scholarshipSummary([s],state.scholarshipEntries),{planned:3000,received:2000,beneficiary:700,transferred:100,pendingTransfers:1200});assert.equal(scholarshipEntryStatus(pending.data),'A receber');assert.equal(scholarshipEntryStatus(r.data),'Repasses pendentes');f.db.close();
+});
+
+test('Edição de bolsas preserva histórico de divisão e bloqueia redução ou transferência incompatível',async()=>{
+ const f=await fixture(),s=await makeScholarship(f),e=(await f.call('scholarshipEntries','POST',scholarshipEntryInput(s))).data;
+ const edited=await f.call('scholarships/'+s.id,'PATCH',{version:1,destinations:[],name:'Bolsa revisada'});assert.equal(edited.status,200);
+ let state=(await f.call('state')).data;assert.deepEqual(state.scholarshipEntries[0],e);assert.deepEqual(state.scholarships[0].destinations,[]);
+ for(const patch of [{monthlyValue:999},{startMonth:'2026-02'},{projectId:null},{beneficiaryName:'Outro'},{beneficiaryType:'self'}])assert.equal((await f.call('scholarships/'+s.id,'PATCH',{version:2,...patch})).status,422);
+ assert.equal((await f.call('scholarshipEntries','POST',scholarshipEntryInput(s,{competence:'2026-02'}))).status,409);
+ assert.equal((await f.call('scholarships/'+s.id,'PATCH',{version:2,monthlyValue:1200,endMonth:'2026-04'})).status,200);
+ state=(await f.call('state')).data;assert.equal(state.projects[0].scholarshipTotal,4800);assert.deepEqual(state.scholarshipEntries[0],e);f.db.close();
+});
+
+test('Edição e exclusão dos lançamentos recalculam recebidos e repasses sem alterar a subvenção',async()=>{
+ const f=await fixture(),s=await makeScholarship(f),other=await makeScholarship(f,{name:'Outra bolsa'}),e=(await f.call('scholarshipEntries','POST',scholarshipEntryInput(s))).data;
+ assert.equal((await f.call('scholarshipEntries/'+e.id,'PATCH',{version:1,scholarshipId:other.id})).status,422);
+ assert.equal((await f.call('scholarshipEntries/'+e.id,'PATCH',{version:1,destinations:e.destinations.map(d=>({...d,paidDate:'2026-02-03'}))})).status,200);
+ const {scholarshipEntryStatus}=await import('../lib/scholarships.mjs');let state=(await f.call('state')).data;assert.equal(scholarshipEntryStatus(state.scholarshipEntries[0]),'Concluído');
+ assert.equal((await f.call('scholarshipEntries/'+e.id,'PATCH',{version:2,receivedDate:null})).status,422);
+ assert.equal((await f.call('scholarshipEntries/'+e.id,'PATCH',{version:2,value:800,receivedDate:null,destinations:[]})).status,200);
+ state=(await f.call('state')).data;assert.equal(state.scholarshipEntries[0].beneficiaryValue,800);assert.equal(state.scholarshipEntries[0].version,3);assert.equal(state.projects[0].executed,0);
+ assert.equal((await f.call('scholarshipEntries/'+e.id,'DELETE',{version:2})).status,409);assert.equal((await f.call('scholarshipEntries/'+e.id,'DELETE',{version:3})).status,200);assert.equal((await f.call('state')).data.scholarshipEntries.length,0);f.db.close();
+});
+
+test('Atividades da bolsa: prazos, acompanhamento, atraso, conclusão, edição e proteção de exclusão',async()=>{
+ const f=await fixture(),s=await makeScholarship(f),input=scholarshipTaskInput(s);
+ assert.equal((await f.call('scholarshipActivities','POST',{...input,dueDate:'2025-12-31'})).status,422);
+ assert.equal((await f.call('scholarshipActivities','POST',{...input,status:'Inválido'})).status,422);
+ const a=(await f.call('scholarshipActivities','POST',input)).data;assert.ok(a.id);
+ const {scholarshipActivityStatus}=await import('../lib/scholarships.mjs');assert.equal(scholarshipActivityStatus(a,'2026-02-01'),'Atrasada');assert.equal(scholarshipActivityStatus(a,'2026-01-31'),'Em andamento');
+ assert.equal((await f.call('scholarships/'+s.id,'PATCH',{version:1,startMonth:'2026-02'})).status,422);
+ assert.equal((await f.call('scholarships/'+s.id,'DELETE',{version:1})).status,422);
+ const updated=await f.call('scholarshipActivities/'+a.id,'PATCH',{version:1,status:'Concluída',notes:'Relatório entregue'});assert.equal(updated.status,200);assert.equal(scholarshipActivityStatus(updated.data,'2026-02-01'),'Concluída');
+ assert.equal((await f.call('scholarshipActivities/'+a.id,'DELETE',{version:1})).status,409);assert.equal((await f.call('scholarshipActivities/'+a.id,'DELETE',{version:2})).status,200);
+ assert.equal((await f.call('scholarships/'+s.id,'DELETE',{version:1})).status,200);assert.equal((await f.call('state')).data.projects[0].scholarshipTotal,0);f.db.close();
+});
+
+test('Bolsas mantêm idempotência, conflitos de edição, auditoria e restrições de acesso',async()=>{
+ const f=await fixture(),key=randomUUID(),input=scholarshipInput(f),created=await f.call('scholarships','POST',input,{key});assert.equal(created.status,201);
+ assert.deepEqual((await f.call('scholarships','POST',input,{key})).data,created.data);assert.equal((await f.call('scholarships','POST',{...input,name:'Outro'},{key})).status,409);
+ const s=created.data,entryKey=randomUUID(),e=await f.call('scholarshipEntries','POST',scholarshipEntryInput(s),{key:entryKey});assert.equal(e.status,201);assert.deepEqual((await f.call('scholarshipEntries','POST',scholarshipEntryInput(s),{key:entryKey})).data,e.data);
+ assert.equal((await f.call('scholarships/'+s.id,'DELETE',{version:1})).status,422);
+ assert.equal((await f.call('scholarships/'+s.id,'PATCH',{version:1,name:'Editado'})).status,200);assert.equal((await f.call('scholarships/'+s.id,'PATCH',{version:1,name:'Conflito'})).status,409);
+ createUser(f.db,{name:'Consulta bolsas',email:'bolsas-view@test.example',password:admin.password,role:'viewer'});
+ const login=await f.call('auth/login','POST',{email:'bolsas-view@test.example',password:admin.password});const cookie=login.response.headers.get('set-cookie').split(';')[0];
+ assert.equal((await f.call('state','GET',undefined,{headers:{cookie}})).data.scholarships.length,1);
+ for(const entity of ['scholarships','scholarshipEntries','scholarshipActivities'])assert.equal((await f.call(entity,'POST',input,{headers:{cookie}})).status,403);
+ assert.equal((await f.call('scholarships','POST',input,{headers:{origin:'https://evil.example'}})).status,403);
+ assert.equal(f.db.prepare("SELECT count(*) AS n FROM audit WHERE entity='scholarships' AND action='create'").get().n,1);assert.equal(f.db.prepare("SELECT count(*) AS n FROM audit WHERE entity='scholarshipEntries' AND action='create'").get().n,1);f.db.close();
+});
+
+test('Divisão de bolsas conserva centavos inclusive com 100% distribuído e valores máximos',async()=>{
+ const {scholarshipSplit,scholarshipMonths,scholarshipTotal}=await import('../lib/scholarships.mjs');
+ const destinations=[{id:'a',name:'A',percent:33.33},{id:'b',name:'B',percent:33.33},{id:'c',name:'C',percent:33.34}];
+ for(const value of [0.01,0.02,0.10,100.01,999.99,10000000000]){const result=scholarshipSplit(value,destinations);assert.equal(result.beneficiaryValue,0);assert.equal(result.destinations.reduce((n,d)=>n+Math.round(d.value*100),0),Math.round(value*100));}
+ assert.deepEqual(scholarshipSplit(123.45,[]),{beneficiaryValue:123.45,destinations:[]});
+ assert.deepEqual(scholarshipMonths('2026-12','2027-02'),['2026-12','2027-01','2027-02']);assert.equal(scholarshipTotal({monthlyValue:0.10,startMonth:'2026-12',endMonth:'2027-02'}),0.30);
+});
+
+test('Migração 7 e backup preservam registros anteriores, bolsas, atividades e lançamentos',async()=>{
+ const f=await fixture(),dir=mkdtempSync(join(tmpdir(),'bolsas-migration-')),path=join(dir,'db.sqlite');
+ try{
+  const a=await activityFixture(f);await f.call('expenses','POST',allocatedExpense(f,a),{files:{invoice:pdf}});const before=(await f.call('state')).data;
+  f.db.exec('DROP TABLE scholarshipEntries; DROP TABLE scholarshipActivities; DROP TABLE scholarships; DELETE FROM migrations WHERE version=7');await backup(f.db,path);f.db.close();
+  let db=openDatabase(path);assert.equal(db.prepare('SELECT count(*) AS n FROM scholarships').get().n,0);assert.equal(db.prepare('SELECT count(*) AS n FROM expenses').get().n,1);assert.equal(Buffer.from(db.prepare('SELECT bytes FROM documents').get().bytes).toString(),pdf);
+  const app=createApplication(db,{origin});const call=async(path,method,data)=>{const r=await app(new Request(origin+'/api/'+path,{method,headers:{origin,cookie:f.cookie,'idempotency-key':randomUUID(),'content-type':'application/json'},body:JSON.stringify(data)}));assert.ok(r.ok);return r.json();};
+  const s=await call('scholarships','POST',scholarshipInput(f));const e=await call('scholarshipEntries','POST',scholarshipEntryInput(s));const task=await call('scholarshipActivities','POST',scholarshipTaskInput(s));await backup(db,join(dir,'backup.sqlite'));db.close();db=openDatabase(join(dir,'backup.sqlite'));
+  const restored=createApplication(db,{origin}),state=await(await restored(new Request(origin+'/api/state',{headers:{cookie:f.cookie}}))).json();assert.equal(state.scholarships[0].id,s.id);assert.equal(state.scholarshipEntries[0].id,e.id);assert.equal(state.scholarshipActivities[0].id,task.id);assert.deepEqual(state.expenses,before.expenses);assert.equal(state.projects[0].executed,before.projects[0].executed);
+  assert.equal(db.prepare('SELECT count(*) AS n FROM migrations WHERE version=7').get().n,1);assert.equal(db.prepare('PRAGMA foreign_key_check').all().length,0);assert.equal(db.prepare('PRAGMA integrity_check').get().integrity_check,'ok');db.close();
+ }finally{rmSync(dir,{recursive:true,force:true});}
+});

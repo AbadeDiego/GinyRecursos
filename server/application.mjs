@@ -1,3 +1,4 @@
+import {scholarshipEntities,scholarshipState,scholarshipTotalFor,mutateScholarship} from './scholarships.mjs';
 import { expenseDocumentKeys } from '../lib/expense-documents.mjs';
 import { syncScheduleProgress } from './schedule-progress.mjs';
 import { activityExecution } from '../lib/activity-execution.mjs';
@@ -10,7 +11,7 @@ import { bootstrap, createUser, digest, hashPassword, newSession, sessionCookie,
 import { transaction } from './database.mjs';
 import { HttpError, check, cents, text, validate, rubrics, months, integer } from './validation.mjs';
 
-const entities = ['companies','projects','team','schedule','links','expenses','resources','budget','remaps','rubrics','projectDocuments'];
+const entities = [...scholarshipEntities,'companies','projects','team','schedule','links','expenses','resources','budget','remaps','rubrics','projectDocuments'];
 const moneyTables = ['schedule','expenses','resources','budget','remaps'];
 const docKinds = ['inss','invoice','payment','quote1','quote2','quote3','support','proof','project'];
 const decode = row => row ? { ...JSON.parse(row.data), ...('schedule_id' in row?{scheduleId:row.schedule_id}:{}), id:row.id, ...(row.project_id ? {projectId:row.project_id} : {}), version:row.version } : null;
@@ -39,10 +40,10 @@ function projectView(db,project) {
     const total=[...planNames(db,project.id,source)].reduce((sum,name)=>sum+plannedRubric(db,project.id,name,source),0),limit=cents(source==='Subvenção'?project.approved:project.counterpart,'',true);
     return total>limit?[{source,planned:total/100,limit:limit/100,excess:(total-limit)/100}]:[];
   });
-  return {...project,planningWarnings,status:project.status==='A iniciar'&&(rs.length||ex.some(e=>!e.draft))?'Em execução':project.status,released:sum(rs.filter(r=>r.kind==='Parcela da subvenção')),counterpartRealized:sum(rs.filter(r=>r.kind==='Contrapartida financeira')),income:sum(rs.filter(r=>r.kind==='Rendimento de aplicação')),executed:sum(ex.filter(e=>!e.draft)),executedSubvention:sum(ex.filter(e=>!e.draft&&sourceOf(e)==='Subvenção')),executedCounterpart:sum(ex.filter(e=>!e.draft&&sourceOf(e)==='Contrapartida')),receivedInstallments:rs.filter(r=>r.kind==='Parcela da subvenção').map(r=>r.installment)};
+  return {...project,scholarshipTotal:scholarshipTotalFor(db,'project_id',project.id),planningWarnings,status:project.status==='A iniciar'&&(rs.length||ex.some(e=>!e.draft))?'Em execução':project.status,released:sum(rs.filter(r=>r.kind==='Parcela da subvenção')),counterpartRealized:sum(rs.filter(r=>r.kind==='Contrapartida financeira')),income:sum(rs.filter(r=>r.kind==='Rendimento de aplicação')),executed:sum(ex.filter(e=>!e.draft)),executedSubvention:sum(ex.filter(e=>!e.draft&&sourceOf(e)==='Subvenção')),executedCounterpart:sum(ex.filter(e=>!e.draft&&sourceOf(e)==='Contrapartida')),receivedInstallments:rs.filter(r=>r.kind==='Parcela da subvenção').map(r=>r.installment)};
 }
 export function snapshot(db,user) {
-  return {user,projectDocuments:rows(db,'projectDocuments'),companies:rows(db,'companies'),projects:rows(db,'projects').map(p=>projectView(db,p)),team:rows(db,'team'),rubrics:rows(db,'rubrics'),schedule:rows(db,'schedule').map(s=>({...s,rubric:s.rubric || s.item})),links:rows(db,'links'),expenses:rows(db,'expenses').reverse().map(e=>expenseView(db,e)),resources:rows(db,'resources').map(r=>({...r,documents:documents(db,'resource_id',r.id)})),budget:rows(db,'budget'),remaps:rows(db,'remaps')};
+  return {...scholarshipState(db),user,projectDocuments:rows(db,'projectDocuments'),companies:rows(db,'companies').map(c=>({...c,scholarshipTotal:scholarshipTotalFor(db,'company_id',c.id)})),projects:rows(db,'projects').map(p=>projectView(db,p)),team:rows(db,'team'),rubrics:rows(db,'rubrics'),schedule:rows(db,'schedule').map(s=>({...s,rubric:s.rubric || s.item})),links:rows(db,'links'),expenses:rows(db,'expenses').reverse().map(e=>expenseView(db,e)),resources:rows(db,'resources').map(r=>({...r,documents:documents(db,'resource_id',r.id)})),budget:rows(db,'budget'),remaps:rows(db,'remaps')};
 }
 const rubricName = item => item.rubric || item.item;
 const normalized = value => value.normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim().toLowerCase();
@@ -286,6 +287,8 @@ export function createApplication(db,{origin=process.env.APP_ORIGIN || 'http://l
         const project=projectView(db,record(db,'projects',path[1])),state=snapshot(db,user),format=url.searchParams.get('format');
         const report={generatedAt:now(),company:record(db,'companies',project.companyId),project};
         for(const entity of ['expenses','resources','schedule','budget','remaps','team','links','rubrics','projectDocuments'])report[entity]=state[entity].filter(r=>r.projectId===project.id);
+        report.scholarships=state.scholarships.filter(s=>s.projectId===project.id);
+        for(const entity of ['scholarshipEntries','scholarshipActivities'])report[entity]=state[entity].filter(item=>report.scholarships.some(s=>s.id===item.scholarshipId));
         report.activityExecution=activityExecution(report.schedule,report.expenses);
         report.planning=fundingSources.flatMap(source=>[...planNames(db,project.id,source)].map(rubric=>({source,rubric,planned:plannedRubric(db,project.id,rubric,source)/100,executed:report.expenses.filter(e=>!e.draft&&e.rubric===rubric&&sourceOf(e)===source).reduce((sum,e)=>sum+cents(e.value),0)/100})));
         report.reconciliation={incoming:report.resources.filter(r=>resourceSource(r)==='Subvenção'),outgoing:report.expenses.filter(e=>!e.draft&&sourceOf(e)==='Subvenção'),balance:(cents(project.released,'',true)+cents(project.income,'',true)-cents(project.executedSubvention,'',true))/100};
@@ -303,7 +306,9 @@ export function createApplication(db,{origin=process.env.APP_ORIGIN || 'http://l
         const cached=db.prepare('SELECT * FROM requests WHERE user_id=? AND key=?').get(user.id,key);
         if(cached){check(cached.hash===requestHash,'Identificador reutilizado com outros dados.',409);return JSON.parse(cached.result);}
         let output,progressProjectId=data.projectId;
-        if(entity==='projectDocuments') {
+        if(scholarshipEntities.includes(entity)) {
+          output=mutateScholarship(db,{entity,path,method,data,files,user,audit});
+        } else if(entity==='projectDocuments') {
           check(!path[2]&&(method==='POST'||path[1]),'Rota não encontrada.',404);
           check(files.every(f=>f.kind==='project')&&files.length<=1,'Selecione apenas um documento do projeto.');
           if(method==='POST') {

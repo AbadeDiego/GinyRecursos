@@ -1,6 +1,6 @@
 # Relatório de validação
 
-Ambiente: Node.js 24.19.0, Linux, bancos SQLite temporários. A validação HTTP usa o servidor Next.js standalone gerado pelo build.
+Ambiente: Node.js 24.22.1, Linux, bancos SQLite temporários. A validação HTTP usa o servidor Next.js standalone gerado pelo build.
 
 ## Cobertura automatizada
 
@@ -45,6 +45,11 @@ Ambiente: Node.js 24.19.0, Linux, bancos SQLite temporários. A validação HTTP
 | Rubricas de lançamentos | Novas despesas e rascunhos exigem previsão no Cronograma do mesmo projeto e fonte; validação ao registrar rascunhos e ao trocar alocação; edição de despesas legadas preservada |
 | Cadastro editável | Nome, termo, órgão, vigência, parcelas e valores; versão, idempotência, duplicidade, perfil consulta, limites por fonte, excesso legado, preservação de anexos e persistência HTTP após reinício |
 | Recursos na Visão Geral | Edição de entradas das duas fontes pela mesma API, com totais recalculados e verificação HTTP |
+| Bolsas | Vínculo com empresa ou projeto, titular próprio/terceiro, vigência, percentual, divisão em centavos, total por empresa/projeto sem duplicação e isolamento da subvenção/contrapartida |
+| Lançamentos de bolsas | Competência única, recebimento, destinos e repasses, valores máximos, datas, edição/exclusão, status, histórico preservado, conflitos, idempotência, permissões e auditoria |
+| Atividades de bolsas | Descrição, responsável, prazo, status, atraso automático, acompanhamento, conclusão e exclusão; proteção da vigência |
+| Migração 7 | Cria tabelas de bolsas preservando lançamentos e comprovantes anteriores; integridade, reabertura, backup e restauração HTTP |
+| Bolsas no navegador | Cadastro próprio e de terceiro, vínculo com projeto/empresa sem projeto, distribuição, recebimento, repasses, atividades, edição, filtros, recarga, totais e layout em 1440 × 1100 e 390 × 844 |
 | Links editáveis | Nome e URL, protocolos inválidos, conflito de versão e preservação da data original |
 
 Comando reprodutível:
@@ -53,13 +58,24 @@ Comando reprodutível:
 npm run test:all
 ```
 
-Resultado da execução em 22/10/2026: **83 testes aprovados, zero falhas**, verificação TypeScript e build concluídos.
+Resultado da execução em 03/11/2026: **92 testes de backend/HTTP aprovados, zero falhas**, verificação TypeScript e build concluídos. O cenário adicional de navegador para Bolsas também foi aprovado, totalizando **93 testes**.
 
-A suíte contém 82 testes de domínio/integração e 1 cenário HTTP de produção com múltiplas verificações. TypeScript e build fazem parte do comando. Arquivos em `tests/backend.test.mjs` e `tests/production.test.mjs`.
+A suíte principal contém 91 testes de domínio/integração e 1 cenário HTTP de produção com múltiplas verificações. TypeScript e build fazem parte do comando. Arquivos em `tests/backend.test.mjs` e `tests/production.test.mjs`.
+
+## Verificação da aba de Bolsas no navegador
+
+O cenário em `tests/scholarships-ui.test.mjs` usa banco temporário e o servidor standalone em processo filho. Instale Playwright em um ambiente de teste e seu Chromium, ou indique um runtime existente com `PLAYWRIGHT_MODULE` e `CHROMIUM_EXECUTABLE_PATH`. Não é uma dependência do servidor de produção.
+
+```sh
+# Após o build, em ambiente com Playwright e Chromium instalados:
+node --test tests/scholarships-ui.test.mjs
+```
+
+`UI_SCREENSHOT_DIR` é opcional e habilita capturas para revisão visual. Foram revisados cadastro, lançamentos, atividades e formulário móvel. A verificação inclui botões de salvar/cancelar acessíveis no celular e ausência de transbordamento horizontal da página.
 
 ## Homologação no destino
 
-Não há Docker daemon nem acesso à Hostinger/Coolify neste ambiente. O servidor standalone foi executado diretamente em Node.js. A imagem Docker e o deploy precisam ser validados no destino. A validação visual ponta a ponta não foi executada nesta revisão. Não se afirma teste visual ponta a ponta das telas autenticadas nem da paginação final do PDF no navegador.
+Não há Docker daemon nem acesso à Hostinger/Coolify neste ambiente. O servidor standalone foi executado diretamente em Node.js. A imagem Docker e o deploy precisam ser validados no destino. A revisão visual e o cenário de navegador desta revisão cobrem a nova aba de Bolsas e seus acessos por Empresas e projetos. As demais telas autenticadas e a paginação final do PDF não foram revalidadas visualmente.
 
 Antes do uso real:
 
@@ -84,5 +100,7 @@ Antes do uso real:
 15. Editar a rubrica de uma previsão com lançamentos vinculados: conferir o aviso com a quantidade, salvar, abrir os lançamentos, validar a nova rubrica e os mesmos comprovantes. Conferir a fonte preservada e as pendências conforme o novo checklist.
 
 16. Abrir Editar lançamento → Editar documentos. Baixar o arquivo atual, selecionar outro, cancelar a seleção e conferir que nada mudou. Selecionar novamente e salvar; conferir o novo download e os demais anexos preservados. Repetir com Pró-labore e Diárias e preencher uma posição ainda vazia.
+
+17. Na aba Bolsas, cadastrar uma bolsa própria e uma de terceiro, testar o vínculo com empresa sem projeto, lançar uma competência, registrar os repasses e atualizar uma atividade. Conferir os totais separados na empresa e no projeto. A migração não converte despesas antigas da rubrica Bolsa para o novo módulo.
 
 Não foram realizados teste de carga, pentest externo ou integração bancária. A instalação atende uma organização com usuários autorizados e vários projetos. Não constitui um SaaS com organizações independentes isoladas.

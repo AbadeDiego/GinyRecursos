@@ -72,3 +72,11 @@ CREATE INDEX expenses_schedule ON expenses(schedule_id);
 -- Migration 6: no new columns. Recalculates schedule.data.status and sets
 -- statusAutomatic=true for activities with recorded, explicitly linked expenses.
 -- Runs through server/schedule-progress.mjs; keeps monetary values and documents.
+
+-- Migration 7: scholarships are independent from grant funding.
+CREATE TABLE scholarships(id TEXT PRIMARY KEY, company_id TEXT NOT NULL REFERENCES companies(id), project_id TEXT REFERENCES projects(id), data TEXT NOT NULL CHECK(json_valid(data)), version INTEGER NOT NULL DEFAULT 1);
+CREATE INDEX scholarships_company ON scholarships(company_id);
+CREATE INDEX scholarships_project ON scholarships(project_id);
+CREATE TABLE scholarshipEntries(id TEXT PRIMARY KEY, scholarship_id TEXT NOT NULL REFERENCES scholarships(id) ON DELETE RESTRICT, competence TEXT NOT NULL, value_cents INTEGER NOT NULL CHECK(value_cents>0), data TEXT NOT NULL CHECK(json_valid(data)), version INTEGER NOT NULL DEFAULT 1, UNIQUE(scholarship_id,competence));
+CREATE TABLE scholarshipActivities(id TEXT PRIMARY KEY, scholarship_id TEXT NOT NULL REFERENCES scholarships(id) ON DELETE RESTRICT, data TEXT NOT NULL CHECK(json_valid(data)), version INTEGER NOT NULL DEFAULT 1);
+CREATE INDEX scholarshipActivities_parent ON scholarshipActivities(scholarship_id);
