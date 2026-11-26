@@ -44,3 +44,5 @@ next-env.d.ts
 /.sites-runtime/
 /outputs/
 /work/
+
+/public/pdf-viewer/

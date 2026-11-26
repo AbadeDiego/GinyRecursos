@@ -3407,91 +3407,6 @@ label {
   font-size: 12px;
 }
 
-.file-checklist {
-  display: grid;
-  gap: 7px;
-}
-
-.file-checklist > div,
-.file-checklist > button {
-  display: flex;
-  width: 100%;
-  min-height: 48px;
-  align-items: center;
-  gap: 9px;
-  padding: 8px 10px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: white;
-  text-align: left;
-}
-
-.file-checklist > div > span,
-.file-checklist > button > span {
-  display: grid;
-  flex: 1;
-  gap: 3px;
-}
-
-.file-checklist strong {
-  font-size: 12px;
-}
-
-.file-checklist small {
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.file-checklist .complete {
-  border-color: #d5e5dc;
-  background: var(--green-50);
-  color: var(--green-700);
-}
-
-.file-checklist .file-document-download {
-  cursor: pointer;
-  transition: border-color 140ms ease, background 140ms ease, transform 140ms ease;
-}
-
-.file-checklist .file-document-download:hover {
-  border-color: #9fc5b0;
-  background: #e8f4ed;
-  transform: translateY(-1px);
-}
-
-.file-checklist .file-document-download:focus-visible {
-  outline: 3px solid rgba(36, 123, 89, 0.16);
-  outline-offset: 1px;
-}
-
-.file-download-label {
-  display: inline-flex;
-  min-height: 30px;
-  align-items: center;
-  gap: 5px;
-  padding: 0 9px;
-  border: 1px solid #bdd5c7;
-  border-radius: 7px;
-  background: white;
-  color: var(--green-700);
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.file-download-label em {
-  font-style: normal;
-}
-
-.file-checklist .complete strong,
-.file-checklist .missing strong {
-  color: var(--ink);
-}
-
-.file-checklist .missing {
-  border-style: dashed;
-  color: var(--amber-700);
-}
-
 .organization-summary {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -5979,7 +5894,6 @@ h1, h2, h3 { letter-spacing: -.025em; }
 .account-user { display:flex; gap:16px; justify-content:space-between; align-items:center; padding:14px 0; border-bottom:1px solid #e2e8e4; }
 .account-form { margin-top:28px; }
 .panel-note { padding:20px; }
-.file-checklist a { color:inherit; text-decoration:none; }
 
 /* Financial sources are presented with separate execution and balances. */
 .metrics-grid.source-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
@@ -6001,18 +5915,13 @@ h1, h2, h3 { letter-spacing: -.025em; }
 .rubric-document-group[open] summary > svg, .report-advanced[open] summary svg { transform: rotate(180deg); }
 .checklist-status { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #94611c; }
 .checklist-status.complete { color: #13735e; }
-.expense-document-row { display: flex; align-items: center; gap: 20px; width: 100%; padding: 18px; text-align: left; border: 0; border-top: 1px solid #e8eeec; background: white; cursor: pointer; color: inherit; }
-.expense-document-row:hover { background: #f4faf8; }
-.expense-document-row > div:first-child { flex: 1; min-width: 0; }
-.expense-document-row strong, .expense-document-row small, .expense-document-row > div > span { display: block; }
+.expense-document-entry { display: grid; gap: 12px; padding: 16px; border-top: 1px solid var(--line); }
+.expense-document-row { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+.expense-document-row > div { flex: 1 1 200px; min-width: 0; }
+.expense-document-row strong, .expense-document-row small, .expense-document-row > div > span { display: block; overflow-wrap: anywhere; }
 .expense-document-row strong { font-size: 14px; }
-.expense-document-row > div > span { font-size: 13px; color: #63747b; margin: 5px 0; overflow-wrap: anywhere; }
-.expense-document-row small { color: #74848b; font-size: 12px; }
-.expense-document-row .document-checks { display: flex; flex-wrap: wrap; gap: 6px; max-width: 400px; }
-.expense-document-row .document-checks span { display: inline-flex; align-items: center; gap: 4px; margin: 0; padding: 5px 8px; border-radius: 5px; font-size: 11px; }
-.expense-document-row .document-checks .done { background: #eaf6ef; color: #277254; }
-.expense-document-row .document-checks .missing { background: #faf2e5; color: #916125; }
-.document-row-action { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: #197565; white-space: nowrap; }
+.expense-document-row > div > span { font-size: 13px; color: var(--muted); margin: 4px 0; }
+.expense-document-row small { color: var(--muted); font-size: 12px; }
 .remap-card .remap-reason { display: block; padding: 18px 20px; margin: 4px 20px 16px; background: #f5f8fa; border-radius: 10px; border-left: 3px solid #aec6c2; min-width: 0; }
 .detail-label { display: block; font-size: 12px; font-weight: 700; color: #526870; margin-bottom: 8px; }
 .remap-card .remap-reason p { font-size: 14px; color: #364e59; line-height: 1.75; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -6060,8 +5969,6 @@ h1, h2, h3 { letter-spacing: -.025em; }
 .report-advanced > div { padding: 0 25px 25px; }
 .report-advanced a { margin-top: 14px; }
 @media(max-width: 900px) {
- .expense-document-row { flex-wrap: wrap; }
- .expense-document-row .document-checks { max-width: none; width: 100%; order: 3; }
  .report-primary { grid-template-columns: 1fr; }
  .report-contents { border-left: 0; border-top: 1px solid #e4eeea; }
 }
@@ -6115,8 +6022,6 @@ h1, h2, h3 { letter-spacing: -.025em; }
 .expense-attachment-editor small { color: #59655f; line-height: 1.5; }
 .expense-attachment-editor .upload-inline { min-width: 0; margin-top: auto; }
 .expense-attachment-editor .upload-inline span { min-width: 0; overflow-wrap: anywhere; }
-.attachment-current { display: flex; align-items: flex-start; gap: 8px; color: var(--green-700); font-size: 14px; overflow-wrap: anywhere; }
-.attachment-current svg { flex-shrink: 0; margin-top: 2px; }
 .attachment-pending { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
 
 /* Scholarships keep their ledger and tasks independent from project funding. */
@@ -6196,3 +6101,228 @@ h1, h2, h3 { letter-spacing: -.025em; }
 .scholarship-modal { display:flex; flex-direction:column; overflow:hidden; }
 .scholarship-modal .modal-header,.scholarship-modal .modal-footer { flex-shrink:0; }
 .scholarship-modal .scholarship-form-scroll { flex:1 1 auto; min-height:0; overflow-y:auto; }
+
+button.docs-count {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+button.docs-count:hover {
+  text-decoration: underline;
+}
+
+.expense-file-list {
+  display: grid;
+  gap: 8px;
+}
+
+.csv-period-help > .expense-file-list {
+  margin-top: 10px;
+}
+
+.expense-file {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 14px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #f7faf8;
+}
+
+.expense-file-info {
+  display: flex;
+  flex: 1 1 160px;
+  align-items: flex-start;
+  gap: 9px;
+  min-width: 0;
+}
+
+.expense-file-info > svg {
+  flex-shrink: 0;
+  color: var(--green-700);
+}
+
+.expense-file-info > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.expense-file-info strong {
+  font-size: 13px;
+}
+
+.expense-file-info span,
+.expense-file-info small,
+.document-preview-header small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.expense-file-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.expense-file-actions > *,
+.document-preview-header > a,
+.document-preview-header > button,
+.pdf-preview-controls > button {
+  min-height: 40px;
+}
+
+.document-preview {
+  position: fixed;
+  inset: 0;
+  width: min(940px, calc(100% - 48px));
+  max-width: none;
+  height: min(860px, calc(100dvh - 48px));
+  max-height: none;
+  margin: auto;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: white;
+  color: var(--ink);
+  box-shadow: 0 24px 80px rgba(8, 24, 18, 0.28);
+}
+
+.document-preview[open] {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.document-preview::backdrop {
+  background: rgba(12, 27, 22, 0.6);
+}
+
+.document-preview-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.document-preview-header > div {
+  flex: 1;
+  min-width: 0;
+}
+
+.document-preview-header h2 {
+  display: -webkit-box;
+  margin: 0 0 3px;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  font-size: 15px;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.document-preview-message {
+  align-self: center;
+  padding: 16px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.document-preview-image,
+.pdf-preview-viewport {
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  background: #e8eeea;
+}
+
+.document-preview-image {
+  display: grid;
+  place-items: center;
+  padding: 10px;
+}
+
+.document-preview-image img {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+.pdf-preview {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.pdf-preview-toolbar,
+.pdf-preview-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pdf-preview-toolbar {
+  flex-wrap: wrap;
+  justify-content: space-between;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.pdf-preview-controls span {
+  min-width: 4ch;
+  text-align: center;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.pdf-preview-viewport {
+  flex: 1 1 auto;
+  padding: 10px;
+  scrollbar-gutter: stable;
+}
+
+.pdf-preview-viewport:focus-visible {
+  outline: 2px solid var(--green-700);
+  outline-offset: -2px;
+}
+
+.pdf-preview-viewport .react-pdf__Document {
+  display: grid;
+  width: max-content;
+  min-width: 100%;
+  justify-items: center;
+}
+
+.pdf-preview-hint {
+  margin: 0;
+  padding: 8px 12px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+@media (max-width: 600px) {
+  .document-preview {
+    width: 100%;
+    height: 100dvh;
+    border: 0;
+    border-radius: 0;
+  }
+
+  .document-preview-header {
+    padding-inline: 12px;
+  }
+
+  .pdf-preview-viewport {
+    padding: 6px;
+  }
+}

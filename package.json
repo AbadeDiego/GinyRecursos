@@ -7,7 +7,9 @@
   },
   "scripts": {
     "install:ci": "npm ci",
+    "predev": "node scripts/prepare-pdf-viewer.mjs",
     "dev": "next dev --hostname 0.0.0.0",
+    "prebuild": "node scripts/prepare-pdf-viewer.mjs",
     "build": "next build --webpack",
     "start": "node --env-file-if-exists=.env scripts/check-env.mjs && next start --hostname 0.0.0.0",
     "test": "node --test tests/backend.test.mjs",
@@ -24,6 +26,7 @@
     "next": "16.2.6",
     "react": "19.2.6",
     "react-dom": "19.2.6",
+    "react-pdf": "11.1.0",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },
   "devDependencies": {
