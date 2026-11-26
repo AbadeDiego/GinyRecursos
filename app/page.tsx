@@ -65,6 +65,7 @@ import {
 import { api, ApiError } from "./api-client";
 import { csvRecords } from "../lib/csv.mjs";
 import { Login, AccountPanel, type AppUser } from "./account-panel";
+import { ExpenseDocumentPreview, ExpenseDocumentRow, type DocumentFile } from "./expense-attachments";
 
 type View =
   | "overview"
@@ -143,7 +144,6 @@ type ResourceEntryDraft = {
   notes: string;
 };
 
-type DocumentFile = { id: string; kind: string; name: string; mime: string; size: number };
 type Expense = {
   version: number;
   id: string;
@@ -390,6 +390,7 @@ function Workspace({initial,onLogout}: {initial: State;onLogout:()=>void}) {
   const [rubricCreateOpen,setRubricCreateOpen]=useState(false);
   const [remapOpen, setRemapOpen] = useState(false);
   const [selectedExpense, setSelectedExpense] = useState<Expense | null>(null);
+  const [previewDocument, setPreviewDocument] = useState<DocumentFile | null>(null);
   const [entries, setEntries] = useState(initial.expenses);
   const [projectLinks, setProjectLinks] = useState(initial.links);
   const [teamMembers, setTeamMembers] = useState(initial.team);
@@ -600,7 +601,7 @@ function Workspace({initial,onLogout}: {initial: State;onLogout:()=>void}) {
           {view === "companies" && <CompaniesView scholarshipTotal={scholarshipSummary(scholarshipData.scholarships,[]).planned} onOpenScholarships={openScholarships} companies={companyList} projects={projectList} selectedCompanyId={profileCompanyId} activeProjectId={projectId} onSelectCompany={setProfileCompanyId} onNewCompany={() => setCompanyModalOpen(true)} onNewProject={startProjectCreation} onSwitchProject={switchProject} />}
           {view === "team" && <TeamView project={activeProject} members={activeTeamMembers} onImport={() => setTeamImportOpen(true)} onAdd={() => setTeamMemberCreateOpen(true)} onEdit={setEditingTeamMember} onDelete={setTeamMemberToDelete} />}
           {view === "schedule" && <ScheduleView onAdd={()=>setScheduleCreateOpen(true)} project={activeProject} items={activeScheduleItems} onImport={() => setScheduleImportOpen(true)} onEdit={setEditingScheduleItem} />}
-          {view === "entries" && <Entries schedule={activeScheduleItems} activityFilter={entryActivityId} onActivityFilter={setEntryActivityId} projectId={activeProject.id} entries={projectEntries} openEntry={setSelectedExpense} newEntry={() => setNewEntryOpen(true)} rubrics={rubricOptions} onEdit={setEditingExpense} onDelete={setDeletingExpense} />}
+          {view === "entries" && <Entries schedule={activeScheduleItems} activityFilter={entryActivityId} onActivityFilter={setEntryActivityId} projectId={activeProject.id} entries={projectEntries} openEntry={setSelectedExpense} onPreview={setPreviewDocument} newEntry={() => setNewEntryOpen(true)} rubrics={rubricOptions} onEdit={setEditingExpense} onDelete={setDeletingExpense} />}
           {view === "resources" && <Resources project={activeProject} resources={resources.filter(r=>r.projectId===activeProject.id)} onAdd={()=>setResourceEntryOpen(true)} onEdit={setEditingResource} onDelete={r=>setDeletion({entity:"resources",id:r.id,version:r.version,title:"Excluir recurso?",description:`${r.kind} · ${money(r.value)}. O registro e seus comprovantes serão excluídos e os saldos serão recalculados.`})} />}
           {view === "reconciliation" && <Reconciliation project={activeProject} entries={projectEntries} resources={resources.filter(r=>r.projectId===activeProject.id)} />}
           {view === "remaps" && <Remaps project={activeProject} remaps={remaps.filter(r=>r.projectId===activeProject.id)} onEdit={setEditingRemap} onDelete={r=>setDeletion({entity:"remaps",id:r.id,version:r.version,title:"Excluir remanejamento?",description:"O valor será devolvido à origem e a previsão criada no destino será removida. A operação será bloqueada se comprometer despesas já registradas ou remanejamentos posteriores."})} openModal={() => setRemapOpen(true)} />}
@@ -610,7 +611,7 @@ function Workspace({initial,onLogout}: {initial: State;onLogout:()=>void}) {
         </div>
       </main>
 
-      {newEntryOpen && <NewEntryModal expenses={projectEntries} schedule={activeScheduleItems} onOpenSchedule={()=>{setNewEntryOpen(false);navigate("schedule");}} onClose={() => setNewEntryOpen(false)} onSave={addEntry} showToast={showToast} />}
+      {newEntryOpen && <NewEntryModal expenses={projectEntries} onPreview={setPreviewDocument} schedule={activeScheduleItems} onOpenSchedule={()=>{setNewEntryOpen(false);navigate("schedule");}} onClose={() => setNewEntryOpen(false)} onSave={addEntry} showToast={showToast} />}
       {deletion && <DeleteRecordModal title={deletion.title} description={deletion.description} onClose={()=>setDeletion(null)} onConfirm={confirmDeletion}/>}
       {editingResource && <ResourceEntryModal initial={editingResource} project={activeProject} onClose={()=>setEditingResource(null)} onSave={editResourceEntry}/>}
       {resourceEntryOpen && <ResourceEntryModal project={activeProject} onClose={() => setResourceEntryOpen(false)} onSave={addResourceEntry} />}
@@ -627,12 +628,13 @@ function Workspace({initial,onLogout}: {initial: State;onLogout:()=>void}) {
       {editingTeamMember && <TeamMemberEditModal member={editingTeamMember} onClose={() => setEditingTeamMember(null)} onSave={saveTeamMember} />}
       {teamMemberToDelete && <DeleteTeamMemberModal member={teamMemberToDelete} onClose={() => setTeamMemberToDelete(null)} onConfirm={deleteTeamMember} />}
       {rubricCreateOpen && <RubricModal onClose={()=>setRubricCreateOpen(false)} onSave={createRubric}/>}
-      {editingExpense && <NewEntryModal expenses={projectEntries} initial={editingExpense} schedule={activeScheduleItems} onOpenSchedule={()=>{setEditingExpense(null);navigate("schedule");}} onClose={()=>setEditingExpense(null)} onSave={editExpense} showToast={showToast}/>}
+      {editingExpense && <NewEntryModal expenses={projectEntries} initial={editingExpense} onPreview={setPreviewDocument} schedule={activeScheduleItems} onOpenSchedule={()=>{setEditingExpense(null);navigate("schedule");}} onClose={()=>setEditingExpense(null)} onSave={editExpense} showToast={showToast}/>}
       {deletingExpense && <DeleteExpenseModal expense={deletingExpense} onClose={()=>setDeletingExpense(null)} onConfirm={()=>deleteExpense(deletingExpense)}/>}
       {scheduleCreateOpen && <ScheduleItemEditModal project={activeProject} rubrics={rubricOptions} onAddRubric={()=>setRubricCreateOpen(true)} onClose={()=>setScheduleCreateOpen(false)} onSave={createScheduleItem}/>}
       {editingScheduleItem && <ScheduleItemEditModal project={activeProject} rubrics={rubricOptions} onAddRubric={()=>setRubricCreateOpen(true)} item={editingScheduleItem} linkedExpenseCount={projectEntries.filter(e=>e.scheduleId===editingScheduleItem.id).length} onClose={() => setEditingScheduleItem(null)} onSave={saveScheduleItem} onDelete={()=>setDeletion({entity:"schedule",id:editingScheduleItem.id,version:editingScheduleItem.version,title:"Excluir previsão?",description:`${editingScheduleItem.activity} · ${money(editingScheduleItem.value)}. A exclusão recalcula o planejamento e não pode comprometer despesas já registradas.`})} />}
       {(remapOpen||editingRemap) && <RemapModal initial={editingRemap||undefined} items={activeScheduleItems} project={activeProject} rubrics={rubricOptions} onAddRubric={()=>setRubricCreateOpen(true)} onClose={() => {setRemapOpen(false);setEditingRemap(null);}} onSave={saveRemap} />}
-      {selectedExpense && !editingExpense && !deletingExpense && <ExpenseModal onEdit={setEditingExpense} onDelete={setDeletingExpense} expense={entries.find(e=>e.id===selectedExpense.id)||selectedExpense} onClose={() => setSelectedExpense(null)} onUpload={uploadExpense} onUpdate={updateExpense} admin={initial.user.role==="admin"} />}
+      {selectedExpense && !editingExpense && !deletingExpense && <ExpenseModal onPreview={setPreviewDocument} onEdit={setEditingExpense} onDelete={setDeletingExpense} expense={entries.find(e=>e.id===selectedExpense.id)||selectedExpense} onClose={() => setSelectedExpense(null)} onUpload={uploadExpense} onUpdate={updateExpense} admin={initial.user.role==="admin"} />}
+      {previewDocument && <ExpenseDocumentPreview key={previewDocument.id} file={previewDocument} onClose={() => setPreviewDocument(null)} />}
       {toast && <div className="toast" role="status"><CheckCircle2 size={19} /><span>{toast}</span><button aria-label="Fechar aviso" onClick={() => setToast("")}><X size={16} /></button></div>}
     </div>
   );
@@ -1029,7 +1031,14 @@ function ExpenseTable({ entries, onOpen, onEdit, onDelete }: { entries: Expense[
               <td><strong>{entry.date}</strong><span>{entry.id}</span></td>
               <td><strong>{entry.supplier}</strong><span>{entry.description}</span></td>
               <td><span className="category-pill">{entry.rubric}</span><small>{sourceOf(entry)}{entry.sourceInferred?" · conferir fonte":""}</small><span className={entry.scheduleId?"expense-activity-label":"warning-text"}>{entry.scheduleActivity||"Sem atividade vinculada"}</span></td>
-              <td><span className={entry.docs === entry.requiredDocs ? "docs-count complete" : "docs-count incomplete"}>{entry.docs === entry.requiredDocs ? <FileCheck2 size={15} /> : <AlertCircle size={15} />}{entry.docs}/{entry.requiredDocs} anexos</span>{entry.docs<entry.requiredDocs&&<span className="warning-text">Documentos pendentes</span>}</td>
+              <td>
+                <button type="button" className={entry.docs === entry.requiredDocs ? "docs-count complete" : "docs-count incomplete"}
+                  aria-label={`Ver anexos de ${entry.supplier}, ${entry.docs} de ${entry.requiredDocs} enviados`}
+                  onClick={event => { event.stopPropagation(); onOpen(entry); }}>
+                  {entry.docs === entry.requiredDocs ? <FileCheck2 size={15} /> : <AlertCircle size={15} />}{entry.docs}/{entry.requiredDocs} anexos
+                </button>
+                {entry.docs < entry.requiredDocs && <span className="warning-text">Documentos pendentes</span>}
+              </td>
               <td className="value-cell">{money(entry.value)}</td>
               <td><StatusBadge status={entry.status} /></td>
               <td><div className="expense-actions"><button className="row-button" aria-label={"Abrir " + entry.id}><ChevronRight size={17} /></button>{onEdit&&<button className="secondary-button small" onClick={e=>{e.stopPropagation();onEdit(entry);}}><Pencil size={14}/> Editar</button>}{onDelete&&<button className="delete-row-button" onClick={e=>{e.stopPropagation();onDelete(entry);}}><Trash2 size={14}/> Excluir</button>}</div></td>
@@ -1044,12 +1053,14 @@ function ExpenseTable({ entries, onOpen, onEdit, onDelete }: { entries: Expense[
 function Entries({
   entries, schedule, activityFilter, onActivityFilter,
   openEntry,
+  onPreview,
   newEntry,
   rubrics, onEdit, onDelete,
   projectId,
 }: {
   entries: Expense[]; schedule:ScheduleItem[]; activityFilter:string; onActivityFilter:(id:string)=>void;
   openEntry: (expense: Expense) => void;
+  onPreview: (file: DocumentFile) => void;
   newEntry: () => void;
   rubrics:RubricOption[]; onEdit:(e:Expense)=>void; onDelete:(e:Expense)=>void;
   projectId: string;
@@ -1071,7 +1082,7 @@ function Entries({
         <div><span>Período</span><strong>{start || "Início"} / {end || "Atual"}</strong><small>datas selecionadas</small></div>
       </section>
       <label className="field entries-activity-filter"><span>Atividade do Cronograma</span><select value={activityFilter} onChange={e=>onActivityFilter(e.target.value)}><option value="">Todas as atividades</option><option value="unallocated">Sem atividade vinculada</option>{schedule.map(item=><option key={item.id} value={item.id}>{item.activity.slice(0,100)} · {sourceOf(item)} · {schedulePeriodLabel(item,undefined)} · #{item.id.slice(0,6)}</option>)}</select></label>
-      <ExpenseDocuments entries={entries} openEntry={openEntry}/>
+      <ExpenseDocuments entries={entries} openEntry={openEntry} onPreview={onPreview} />
       <section className="panel">
         <div className="toolbar">
           <div className="search-field"><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar por fornecedor, ID ou rubrica" /></div>
@@ -1114,16 +1125,83 @@ function RemapReason({reason}:{reason:string}) {
  return <div className="remap-reason"><span className="detail-label">Justificativa do remanejamento</span><p className={expanded||(reason.length<=180&&reason.split("\n").length<=3)?"":"clamped"}>{reason}</p>{(reason.length>180||reason.split("\n").length>3)&&<button className="text-button" aria-expanded={expanded} onClick={()=>setExpanded(!expanded)}>{expanded?"Recolher justificativa":"Ler justificativa completa"}<ChevronDown size={15}/></button>}</div>;
 }
 
-function ExpenseDocuments({entries,openEntry}:{entries:Expense[];openEntry:(e:Expense)=>void}) {
- const [pendingOnly,setPendingOnly]=useState(false);
- const groups=Array.from(new Set(entries.map(e=>JSON.stringify([e.rubric,sourceOf(e)])))).map(key=>{
-   const [rubric,source]=JSON.parse(key) as [string,string];
-   const list=entries.filter(e=>e.rubric===rubric&&sourceOf(e)===source),complete=list.filter(e=>e.docs===e.requiredDocs).length;
-   return {key,rubric,source,list,complete};
- });
- return <section className="panel expense-document-panel"><div className="panel-header"><div><h2>Documentos por rubrica</h2><p>Documentos conforme a rubrica. Diárias: recibo e comprovante. Pró-labore: Guia do INSS, recibo e comprovante. Todos os anexos são opcionais.</p></div><label className="check-filter"><input type="checkbox" checked={pendingOnly} onChange={e=>setPendingOnly(e.target.checked)}/> Somente com anexos a completar</label></div>
- <div className="rubric-checklist">{groups.filter(g=>!pendingOnly||g.complete<g.list.length).map(g=><details key={g.key} className="rubric-document-group"><summary><div><strong>{g.rubric}</strong><small>{g.source} · {g.list.length} lançamento(s)</small></div><span className={g.complete===g.list.length?"checklist-status complete":"checklist-status"}>{g.complete===g.list.length?<CheckCircle2 size={17}/>:<Paperclip size={17}/>} {g.complete}/{g.list.length} com todos os anexos</span><ChevronDown size={18}/></summary><div className="rubric-document-items">{g.list.filter(e=>!pendingOnly||e.docs<e.requiredDocs).map(e=><button key={e.id} className="expense-document-row" onClick={()=>openEntry(e)}><div><strong>{e.supplier}</strong><span>{e.description}</span><small>{e.date.split("-").reverse().join("/")} · {money(e.value)}{e.draft?" · Rascunho":""}</small></div><div className="document-checks">{Object.entries(expenseDocumentLabels(e)).map(([kind,label])=><span key={kind} className={e.documents?.some(d=>d.kind===kind)?"done":"missing"}>{e.documents?.some(d=>d.kind===kind)?<Check size={13}/>:<Clock3 size={13}/>} {label}</span>)}</div><span className="document-row-action">Ver / anexar <ChevronRight size={16}/></span></button>)}</div></details>)}</div>
- {(!groups.length||pendingOnly&&groups.every(g=>g.complete===g.list.length))&&<div className="empty-state compact"><FileCheck2 size={26}/><p>{groups.length?"Todos os lançamentos têm os anexos do seu checklist.":"O acompanhamento aparecerá quando você cadastrar o primeiro lançamento."}</p></div>}</section>;
+function ExpenseDocuments({ entries, openEntry, onPreview }: {
+  entries: Expense[];
+  openEntry: (expense: Expense) => void;
+  onPreview: (file: DocumentFile) => void;
+}) {
+  const [pendingOnly, setPendingOnly] = useState(false);
+  const groups = Array.from(new Set(entries.map(entry => JSON.stringify([entry.rubric, sourceOf(entry)])))).map(key => {
+    const [rubric, source] = JSON.parse(key) as [string, string];
+    const list = entries.filter(entry => entry.rubric === rubric && sourceOf(entry) === source);
+    const complete = list.filter(entry => entry.docs === entry.requiredDocs).length;
+    return { key, rubric, source, list, complete };
+  });
+  const visibleGroups = groups.filter(group => !pendingOnly || group.complete < group.list.length);
+
+  return (
+    <section className="panel expense-document-panel">
+      <div className="panel-header">
+        <h2>Documentos por rubrica</h2>
+        <label className="check-filter"><input type="checkbox" checked={pendingOnly} onChange={event => setPendingOnly(event.target.checked)} /> Somente com anexos a completar</label>
+      </div>
+      <div className="rubric-checklist">
+        {visibleGroups.map(group => (
+          <details key={group.key} className="rubric-document-group">
+            <summary>
+              <div><strong>{group.rubric}</strong><small>{group.source} · {group.list.length} lançamento(s)</small></div>
+              <span className={group.complete === group.list.length ? "checklist-status complete" : "checklist-status"}>
+                {group.complete === group.list.length ? <CheckCircle2 size={17} /> : <Paperclip size={17} />}
+                {group.complete}/{group.list.length} com todos os anexos
+              </span>
+              <ChevronDown size={18} />
+            </summary>
+            <div className="rubric-document-items">
+              {group.list.filter(entry => !pendingOnly || entry.docs < entry.requiredDocs).map(entry => {
+                const labels = expenseDocumentLabels(entry);
+                const documents = entry.documents || [];
+                const missing = Object.entries(labels).filter(([kind]) => !documents.some(file => file.kind === kind));
+                return (
+                  <article className="expense-document-entry" key={entry.id}>
+                    <div className="expense-document-row">
+                      <div>
+                        <strong>{entry.supplier}</strong>
+                        <span>{entry.description}</span>
+                        <small>{entry.date.split("-").reverse().join("/")} · {money(entry.value)}{entry.draft ? " · Rascunho" : ""}</small>
+                      </div>
+                      <button type="button" className="secondary-button small" onClick={() => openEntry(entry)}>
+                        Abrir lançamento <ChevronRight size={16} aria-hidden="true" />
+                      </button>
+                    </div>
+                    {documents.length > 0 && (
+                      <div className="expense-file-list">
+                        {documents.map(file => (
+                          <ExpenseDocumentRow key={file.id} file={file} label={labels[file.kind] || "Anexo anterior"} onPreview={onPreview} />
+                        ))}
+                      </div>
+                    )}
+                    {missing.length > 0 && (
+                      <div className="document-checks" role="group" aria-label="Anexos pendentes">
+                        {missing.map(([kind, label]) => (
+                          <span key={kind} className="missing"><Clock3 size={13} aria-hidden="true" /> {label}</span>
+                        ))}
+                      </div>
+                    )}
+                  </article>
+                );
+              })}
+            </div>
+          </details>
+        ))}
+      </div>
+      {!visibleGroups.length && (
+        <div className="empty-state compact">
+          <FileCheck2 size={26} />
+          <p>{groups.length ? "Todos os lançamentos têm os anexos do seu checklist." : "O acompanhamento aparecerá quando você cadastrar o primeiro lançamento."}</p>
+        </div>
+      )}
+    </section>
+  );
 }
 
 function Documents({documents,onAdd,onEdit,onDelete}:{documents:ProjectDocument[];onAdd:()=>void;onEdit:(d:ProjectDocument)=>void;onDelete:(d:ProjectDocument)=>void}) {
@@ -1977,12 +2055,13 @@ type ExpenseDraft = Pick<Expense,"scheduleId"|"source"|"supplier"|"description"|
 function NewEntryModal({
   onClose,
   onSave,
-  initial, schedule, expenses, onOpenSchedule,
+  initial, schedule, expenses, onOpenSchedule, onPreview,
   showToast,
 }: {
   onClose: () => void;
   onSave: (entry: ExpenseDraft, draft: boolean, files: Record<string,File>) => void;
   initial?:Expense; schedule:ScheduleItem[]; expenses:Expense[]; onOpenSchedule:()=>void;
+  onPreview: (file: DocumentFile) => void;
   showToast: (message: string) => void;
 }) {
   const [step, setStep] = useState(1);
@@ -2007,7 +2086,7 @@ function NewEntryModal({
   const setFile = (key: string, file?: File) => {
     if (file) setFiles((current) => ({ ...current, [key]: file }));
   };
-  const renderAttachment=(kind:string,label:string)=>initial?<ExpenseAttachmentEditor key={kind} label={label} document={initial.documents?.find(d=>d.kind===kind)} file={files[kind]} onFile={file=>setFile(kind,file)} onClear={()=>setFiles(current=>{const next={...current};delete next[kind];return next;})}/>:<UploadBox key={kind} label={label} file={files[kind]?.name} onFile={file=>setFile(kind,file)}/>;
+  const renderAttachment=(kind:string,label:string)=>initial?<ExpenseAttachmentEditor key={kind} label={label} document={initial.documents?.find(d=>d.kind===kind)} onPreview={onPreview} file={files[kind]} onFile={file=>setFile(kind,file)} onClear={()=>setFiles(current=>{const next={...current};delete next[kind];return next;})}/>:<UploadBox key={kind} label={label} file={files[kind]?.name} onFile={file=>setFile(kind,file)}/>;
   const previousDocuments=initial?.documents?.filter(d=>!requiredKeys.includes(d.kind))||[];
   const save = (draft: boolean) => {
     if (!firstStepComplete) {
@@ -2054,7 +2133,7 @@ function NewEntryModal({
               <div className="upload-section-title"><span>Comprovação da despesa</span><b>Envio opcional</b></div>
               <div className={requiredKeys.filter(kind=>!kind.startsWith("quote")).length>2?"upload-grid":"upload-grid two"}>{Object.entries(expenseDocumentLabels({rubric})).filter(([kind])=>!kind.startsWith("quote")).map(([kind,label])=>renderAttachment(kind,label))}</div>
             </div>
-            {previousDocuments.length>0&&<details className="csv-period-help"><summary>Anexos anteriores ({previousDocuments.length})</summary><p>Arquivos preservados fora do checklist desta rubrica.</p>{previousDocuments.map(doc=><a className="file-document-download" key={doc.id} href={"/api/documents/"+doc.id}><Download size={16}/>{doc.name}</a>)}</details>}
+            {previousDocuments.length>0&&<details className="csv-period-help"><summary>Anexos anteriores ({previousDocuments.length})</summary><p>Arquivos preservados fora do checklist desta rubrica.</p><div className="expense-file-list">{previousDocuments.map(file=><ExpenseDocumentRow key={file.id} file={file} label="Anexo anterior" onPreview={onPreview} />)}</div></details>}
             <div className="document-tip"><ShieldCheck size={18} /><span>Formatos aceitos: PDF, JPG ou PNG · tamanho máximo de 10 MB por arquivo.</span></div>
           </div>
         )}
@@ -2071,8 +2150,28 @@ function NewEntryModal({
   );
 }
 
-function ExpenseAttachmentEditor({label,document,file,onFile,onClear}:{label:string;document?:DocumentFile;file?:File;onFile:(file?:File)=>void;onClear:()=>void}) {
- return <div className="expense-attachment-editor"><strong>{label}</strong>{document?<a className="attachment-current" href={"/api/documents/"+document.id}><Download size={16}/><span>Arquivo atual: {document.name}</span></a>:<small>Documento ainda não enviado · opcional</small>}<label className="upload-inline"><input type="file" accept=".pdf,.jpg,.jpeg,.png" aria-label={(document?"Substituir ":"Anexar ")+label} onChange={e=>{onFile(e.target.files?.[0]);e.target.value="";}}/><Paperclip size={19}/><span><strong>{document?"Substituir arquivo":"Anexar arquivo"}</strong><small>{file?.name||"Selecionar PDF, JPG ou PNG"}</small></span></label>{file&&<div className="attachment-pending"><small>{document?"Substituição pendente":"Envio pendente"} · será aplicado ao salvar</small><button type="button" className="text-button" onClick={onClear}>Cancelar seleção</button></div>}</div>;
+function ExpenseAttachmentEditor({ label, document, file, onFile, onClear, onPreview }: {
+  label: string;
+  document?: DocumentFile;
+  file?: File;
+  onFile: (file?: File) => void;
+  onClear: () => void;
+  onPreview: (file: DocumentFile) => void;
+}) {
+  return (
+    <div className="expense-attachment-editor">
+      {document ? <ExpenseDocumentRow file={document} label={label} onPreview={onPreview} /> : (
+        <><strong>{label}</strong><small>Documento ainda não enviado · opcional</small></>
+      )}
+      <label className="upload-inline">
+        <input type="file" accept=".pdf,.jpg,.jpeg,.png" aria-label={(document ? "Substituir " : "Anexar ") + label}
+          onChange={event => { onFile(event.target.files?.[0]); event.target.value = ""; }} />
+        <Paperclip size={19} />
+        <span><strong>{document ? "Substituir arquivo" : "Anexar arquivo"}</strong><small>{file?.name || "Selecionar PDF, JPG ou PNG"}</small></span>
+      </label>
+      {file && <div className="attachment-pending"><small>{document ? "Substituição pendente" : "Envio pendente"} · será aplicado ao salvar</small><button type="button" className="text-button" onClick={onClear}>Cancelar seleção</button></div>}
+    </div>
+  );
 }
 
 function UploadBox({ label, file, onFile, accept=".pdf,.jpg,.jpeg,.png" }: { label: string; file?: string; onFile: (file?: File) => void; accept?:string }) {
@@ -2114,10 +2213,77 @@ function DeleteExpenseModal({expense,onClose,onConfirm}:{expense:Expense;onClose
   return <div className="modal-backdrop" style={{zIndex:2500}}><section className="modal" role="dialog" aria-modal="true" aria-label="Excluir lançamento"><div className="modal-header"><h2>Excluir lançamento?</h2></div><div className="modal-body"><p><strong>{expense.supplier}</strong> · {money(expense.value)}</p><p>{expense.description}</p><p>O lançamento e seus anexos serão excluídos. Os saldos serão recalculados e a exclusão ficará registrada no histórico de auditoria.</p></div><div className="modal-footer"><button className="secondary-button" onClick={onClose}>Cancelar</button><button className="delete-row-button" onClick={onConfirm}><Trash2 size={16}/> Confirmar exclusão</button></div></section></div>;
 }
 
-function ExpenseModal({expense,onClose,onUpload,onUpdate,admin,onEdit,onDelete}:{onEdit:(e:Expense)=>void;onDelete:(e:Expense)=>void;expense:Expense;onClose:()=>void;onUpload:(e:Expense,files:Record<string,File>)=>void;onUpdate:(e:Expense,action:string,reference?:string)=>void;admin:boolean}) {
- const [files,setFiles]=useState<Record<string,File>>({}),[reference,setReference]=useState("");
- const keys=expenseDocumentKeys(expense),labels=expenseDocumentLabels(expense);
- const previousDocuments=expense.documents?.filter(d=>!keys.includes(d.kind))||[];
- const pending=Object.fromEntries(Object.entries(files).filter(([kind])=>!expense.documents?.some(d=>d.kind===kind)));
- return <div className="modal-backdrop"><section className="modal expense-modal" role="dialog" aria-modal="true" aria-label="Detalhes da despesa"><div className="modal-header"><div><span>{expense.date}</span><h2>{expense.supplier}</h2></div><button className="secondary-button" onClick={onClose}>Fechar</button></div><div className="expense-detail-hero"><strong>{money(expense.value)}</strong><StatusBadge status={expense.status}/></div><div className="modal-body"><p>{expense.description}</p><p>{expense.rubric} · {sourceOf(expense)}</p><div className="activity-allocation-summary"><strong>Atividade do Cronograma</strong><span>{expense.scheduleActivity||"Sem atividade vinculada — escolha a atividade em Editar lançamento."}</span>{expense.scheduleId&&<small>{schedulePeriodLabel({month:expense.scheduleMonth,year:expense.scheduleYear,endMonth:expense.scheduleEndMonth,endYear:expense.scheduleEndYear},undefined)}</small>}</div>{expense.notes&&<p>{expense.notes}</p>}<div className="expense-actions"><button className="secondary-button" onClick={()=>onEdit(expense)}><Pencil size={16}/> Editar lançamento</button><button className="delete-row-button" onClick={()=>onDelete(expense)}><Trash2 size={16}/> Excluir lançamento</button></div>{expense.docs<expense.requiredDocs&&<div className="document-pending-alert"><AlertCircle size={18}/><strong>Documentos pendentes: faltam {expense.requiredDocs-expense.docs} anexos.</strong></div>}<h3>Documentos do lançamento</h3><p className="panel-note">Todos os anexos são opcionais. O checklist ajuda a acompanhar a documentação.</p><div className="file-checklist">{keys.map(kind=>{const doc=expense.documents?.find(d=>d.kind===kind);return doc?<a className="complete file-document-download" key={kind} href={"/api/documents/"+doc.id}><FileCheck2 size={18}/><span><strong>{labels[kind]}</strong><small>{doc.name}</small></span><Download size={18}/></a>:<UploadBox key={kind} label={labels[kind]} file={files[kind]?.name} onFile={file=>{if(file)setFiles({...files,[kind]:file});}}/>;})}</div>{previousDocuments.length>0&&<details className="csv-period-help"><summary>Anexos anteriores ({previousDocuments.length})</summary><p>Arquivos preservados; não entram no checklist atual.</p>{previousDocuments.map(doc=><a className="file-document-download" key={doc.id} href={"/api/documents/"+doc.id}><Download size={16}/>{doc.name}</a>)}</details>}{Object.keys(pending).length>0&&<button className="secondary-button" onClick={()=>onUpload(expense,pending)}>Salvar anexos selecionados</button>}{!expense.draft&&sourceOf(expense)==="Subvenção"&&admin&&expense.status!=="Conciliado"&&<label className="field"><span>Referência do extrato conferido</span><input value={reference} onChange={e=>setReference(e.target.value)} placeholder="Identificador bancário da transação"/></label>}</div><div className="modal-footer"><button className="secondary-button" onClick={onClose}>Fechar</button>{expense.draft?<button className="primary-button" onClick={()=>onUpdate(expense,"submit")}>Registrar despesa</button>:sourceOf(expense)==="Subvenção"&&admin&&expense.status!=="Conciliado"?<button className="primary-button" disabled={!reference.trim()} onClick={()=>onUpdate(expense,"reconcile",reference)}>Confirmar conferência do extrato</button>:null}</div></section></div>;
+function ExpenseModal({ expense, onClose, onUpload, onUpdate, admin, onEdit, onDelete, onPreview }: {
+  expense: Expense;
+  onClose: () => void;
+  onUpload: (expense: Expense, files: Record<string, File>) => void;
+  onUpdate: (expense: Expense, action: string, reference?: string) => void;
+  admin: boolean;
+  onEdit: (expense: Expense) => void;
+  onDelete: (expense: Expense) => void;
+  onPreview: (file: DocumentFile) => void;
+}) {
+  const [files, setFiles] = useState<Record<string, File>>({});
+  const [reference, setReference] = useState("");
+  const keys = expenseDocumentKeys(expense);
+  const labels = expenseDocumentLabels(expense);
+  const documents = expense.documents || [];
+  const previousDocuments = documents.filter(file => !keys.includes(file.kind));
+  const pending = Object.fromEntries(Object.entries(files).filter(([kind]) => !documents.some(file => file.kind === kind)));
+  const canReconcile = !expense.draft && sourceOf(expense) === "Subvenção" && admin && expense.status !== "Conciliado";
+
+  return (
+    <div className="modal-backdrop">
+      <section className="modal expense-modal" role="dialog" aria-modal="true" aria-label="Detalhes da despesa">
+        <div className="modal-header">
+          <div><span>{expense.date}</span><h2>{expense.supplier}</h2></div>
+          <button className="secondary-button" onClick={onClose}>Fechar</button>
+        </div>
+        <div className="expense-detail-hero"><strong>{money(expense.value)}</strong><StatusBadge status={expense.status} /></div>
+        <div className="modal-body">
+          <p>{expense.description}</p>
+          <p>{expense.rubric} · {sourceOf(expense)}</p>
+          <div className="activity-allocation-summary">
+            <strong>Atividade do Cronograma</strong>
+            <span>{expense.scheduleActivity || "Sem atividade vinculada — escolha a atividade em Editar lançamento."}</span>
+            {expense.scheduleId && <small>{schedulePeriodLabel({ month: expense.scheduleMonth, year: expense.scheduleYear, endMonth: expense.scheduleEndMonth, endYear: expense.scheduleEndYear }, undefined)}</small>}
+          </div>
+          {expense.notes && <p>{expense.notes}</p>}
+          <div className="expense-actions">
+            <button className="secondary-button" onClick={() => onEdit(expense)}><Pencil size={16} /> Editar lançamento</button>
+            <button className="delete-row-button" onClick={() => onDelete(expense)}><Trash2 size={16} /> Excluir lançamento</button>
+          </div>
+          <h3>Documentos do lançamento</h3>
+          {expense.docs < expense.requiredDocs && <div className="document-pending-alert"><AlertCircle size={18} /><strong>Anexos opcionais pendentes: {expense.requiredDocs - expense.docs}</strong></div>}
+          <div className="expense-file-list">
+            {keys.map(kind => {
+              const file = documents.find(file => file.kind === kind);
+              return file ? <ExpenseDocumentRow key={kind} file={file} label={labels[kind]} onPreview={onPreview} /> : (
+                <UploadBox key={kind} label={labels[kind]} file={files[kind]?.name}
+                  onFile={file => { if (file) setFiles(current => ({ ...current, [kind]: file })); }} />
+              );
+            })}
+          </div>
+          {previousDocuments.length > 0 && (
+            <details className="csv-period-help">
+              <summary>Anexos anteriores ({previousDocuments.length})</summary>
+              <div className="expense-file-list">
+                {previousDocuments.map(file => <ExpenseDocumentRow key={file.id} file={file} label="Anexo anterior" onPreview={onPreview} />)}
+              </div>
+            </details>
+          )}
+          {Object.keys(pending).length > 0 && <button className="secondary-button" onClick={() => onUpload(expense, pending)}>Salvar anexos selecionados</button>}
+          {canReconcile && (
+            <label className="field"><span>Referência do extrato conferido</span><input value={reference} onChange={event => setReference(event.target.value)} placeholder="Identificador bancário da transação" /></label>
+          )}
+        </div>
+        <div className="modal-footer">
+          <button className="secondary-button" onClick={onClose}>Fechar</button>
+          {expense.draft ? <button className="primary-button" onClick={() => onUpdate(expense, "submit")}>Registrar despesa</button> : canReconcile && (
+            <button className="primary-button" disabled={!reference.trim()} onClick={() => onUpdate(expense, "reconcile", reference)}>Confirmar conferência do extrato</button>
+          )}
+        </div>
+      </section>
+    </div>
+  );
 }
